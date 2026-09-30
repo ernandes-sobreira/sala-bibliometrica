@@ -5,7 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sala Bibliométrica</title>
 <style>
-html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;background:#f6f8fa;color:#1a2332}.boot{min-height:100vh;display:grid;place-items:center}.box{background:#fff;border:1px solid #e3e8ee;border-radius:14px;padding:28px 32px;max-width:560px;box-shadow:0 12px 36px rgba(26,35,50,.08)}.spin{display:inline-block;width:18px;height:18px;border:2px solid #cfd8e2;border-top-color:#56B4E9;border-radius:50%;animation:s .8s linear infinite;vertical-align:middle;margin-right:10px}@keyframes s{to{transform:rotate(360deg)}}.err{color:#b23a3a;line-height:1.5}
+html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;background:#f6f8fa;color:#1a2332}
+.boot{min-height:100vh;display:grid;place-items:center}
+.box{background:#fff;border:1px solid #e3e8ee;border-radius:14px;padding:28px 32px;max-width:620px;box-shadow:0 12px 36px rgba(26,35,50,.08)}
+.spin{display:inline-block;width:18px;height:18px;border:2px solid #cfd8e2;border-top-color:#56B4E9;border-radius:50%;animation:s .8s linear infinite;vertical-align:middle;margin-right:10px}
+@keyframes s{to{transform:rotate(360deg)}}
+.err{color:#b23a3a;line-height:1.5}
 </style>
 </head>
 <body>
@@ -32,10 +37,49 @@ html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,"Se
     return;
   }
 
-  // 1) Reconhece o CSV padrão exportado pela SciELO e separa corretamente os autores.
+  // ---------- SciELO: parser adequado ao CSV real ----------
   html=html.replace(
     "function splitSep(str, sep){ if(!str) return []; return String(str).split(sep).map(s => s.trim()).filter(Boolean); }",
-    `function splitSep(str, sep){ if(!str) return []; return String(str).split(sep).map(s => s.trim()).filter(Boolean); }\nfunction splitSciELOAuthors(str){\n  if(!str) return [];\n  const p=String(str).split(',').map(s=>s.trim()).filter(Boolean), out=[];\n  for(let i=0;i<p.length;i+=2){ out.push(p[i+1] ? p[i]+', '+p[i+1] : p[i]); }\n  return [...new Set(out.map(a=>a.replace(/\\s+/g,' ').trim()).filter(Boolean))];\n}`
+    `function splitSep(str, sep){ if(!str) return []; return String(str).split(sep).map(s => s.trim()).filter(Boolean); }
+function decodeSciELOText(v){
+  if(v == null) return '';
+  const el=document.createElement('textarea');
+  el.innerHTML=String(v);
+  return el.value.replace(/\\s+/g,' ').trim();
+}
+function canonSciELOAuthor(v){
+  let s=decodeSciELOText(v).replace(/[–—]/g,'-').replace(/\\s+/g,' ').trim();
+  // O SciELO pode variar o mesmo sufixo entre "Oliveira-Júnior" e "Oliveira Junior".
+  s=s.replace(/-\\s*(Júnior|Junior|Filho|Neto),/i,' $1,');
+  s=s.replace(/\\bJúnior\\b/g,'Junior');
+  return s;
+}
+function splitSciELOAuthors(str){
+  if(!str) return [];
+  const p=decodeSciELOText(str).split(',').map(s=>s.trim()).filter(Boolean), out=[];
+  for(let i=0;i<p.length;i+=2){
+    const a=canonSciELOAuthor(p[i+1] ? p[i]+', '+p[i+1] : p[i]);
+    if(a) out.push(a);
+  }
+  return [...new Set(out)];
+}
+const SCIELO_STOP=new Set(("a o os as um uma uns umas de da do das dos e em no na nos nas por para com sem sobre entre ao aos que se sua seu suas seus " +
+"the of and in on for to from by with without an is are be as at or into using use via how much can due one " +
+"el la los las del y en por para con sin un una unos unas al su sus que " +
+"uma um no na nos nas do da dos das ao aos às com entre sobre " +
+"this that these those our your their its or not " +
+"study analysis assessment using based effects effect role case").split(/\\s+/));
+function sciELOTitleTerms(title){
+  let s=decodeSciELOText(title).toLowerCase().normalize('NFC');
+  s=s.replace(/[^\\p{L}\\p{N}-]+/gu,' ');
+  const out=[];
+  s.split(/\\s+/).forEach(t=>{
+    t=t.replace(/^-+|-+$/g,'');
+    if(!t || t.length<3 || /^\\d+$/.test(t) || SCIELO_STOP.has(t)) return;
+    out.push(t);
+  });
+  return [...new Set(out)];
+}`
   );
 
   html=html.replace(
@@ -45,16 +89,208 @@ html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,"Se
 
   html=html.replace(
     "    else if(isPubMed) o = {authors: splitSep(r['Authors'], ','), title: r['Title'], journal: r['Journal/Book'], year: r['Publication Year'], keywords: [], kwplus: [], area: [], affil: '', addresses: '', citations: '', doi: r['DOI'], doctype: '', lang: ''};\n    else o = {authors: splitSep(g(r,'AU','Authors','Author'), ';'), title: g(r,'TI','Article Title','Title'), journal: g(r,'SO','Source Title','Source title','Journal'), year: g(r,'PY','Publication Year','Year'), keywords: splitSep(g(r,'DE','Author Keywords','Keywords'), ';'), kwplus: splitSep(g(r,'ID','Keywords Plus'), ';'), area: splitSep(g(r,'WC','WoS Categories','Research Areas','Subject'), ';'), affil: g(r,'C1','Affiliations','Addresses'), addresses: g(r,'C1','Addresses','Affiliations'), citations: g(r,'TC','Times Cited, WoS Core','Cited by'), doi: g(r,'DI','DOI'), doctype: g(r,'DT','Document Type'), lang: g(r,'LA','Language')};",
-    "    else if(isPubMed) o = {authors: splitSep(r['Authors'], ','), title: r['Title'], journal: r['Journal/Book'], year: r['Publication Year'], keywords: [], kwplus: [], area: [], affil: '', addresses: '', citations: '', doi: r['DOI'], doctype: '', lang: ''};\n    else if(isSciELO) o = {authors: splitSciELOAuthors(r['Author(s)']), title: r['Title'], journal: r['Journal'] || r['Source'], year: r['Publication year'], keywords: splitSep(g(r,'Keywords','Palavras-chave','Palavras chave'), /;|\\|/), kwplus: [], area: [], affil: '', addresses: '', citations: 0, doi: g(r,'DOI'), doctype: '', lang: r['Language(s)'] || ''};\n    else o = {authors: splitSep(g(r,'AU','Authors','Author'), ';'), title: g(r,'TI','Article Title','Title'), journal: g(r,'SO','Source Title','Source title','Journal'), year: g(r,'PY','Publication Year','Year'), keywords: splitSep(g(r,'DE','Author Keywords','Keywords'), ';'), kwplus: splitSep(g(r,'ID','Keywords Plus'), ';'), area: splitSep(g(r,'WC','WoS Categories','Research Areas','Subject'), ';'), affil: g(r,'C1','Affiliations','Addresses'), addresses: g(r,'C1','Addresses','Affiliations'), citations: g(r,'TC','Times Cited, WoS Core','Cited by'), doi: g(r,'DI','DOI'), doctype: g(r,'DT','Document Type'), lang: g(r,'LA','Language')};"
+    "    else if(isPubMed) o = {authors: splitSep(r['Authors'], ','), title: r['Title'], journal: r['Journal/Book'], year: r['Publication Year'], keywords: [], kwplus: [], area: [], affil: '', addresses: '', citations: '', doi: r['DOI'], doctype: '', lang: ''};\n    else if(isSciELO) { const st=decodeSciELOText(r['Title']); o = {authors: splitSciELOAuthors(r['Author(s)']), title: st, journal: decodeSciELOText(r['Journal'] || r['Source']), year: r['Publication year'], keywords: sciELOTitleTerms(st), kwplus: [], area: [], affil: '', addresses: '', citations: 0, doi: g(r,'DOI'), doctype: 'Article', lang: decodeSciELOText(r['Language(s)']), url: String(r['Fulltext URL'] || '').trim(), source: decodeSciELOText(r['Source']), scieloId: String(r['ID'] || '').trim()}; }\n    else o = {authors: splitSep(g(r,'AU','Authors','Author'), ';'), title: g(r,'TI','Article Title','Title'), journal: g(r,'SO','Source Title','Source title','Journal'), year: g(r,'PY','Publication Year','Year'), keywords: splitSep(g(r,'DE','Author Keywords','Keywords'), ';'), kwplus: splitSep(g(r,'ID','Keywords Plus'), ';'), area: splitSep(g(r,'WC','WoS Categories','Research Areas','Subject'), ';'), affil: g(r,'C1','Affiliations','Addresses'), addresses: g(r,'C1','Addresses','Affiliations'), citations: g(r,'TC','Times Cited, WoS Core','Cited by'), doi: g(r,'DI','DOI'), doctype: g(r,'DT','Document Type'), lang: g(r,'LA','Language')};"
   );
 
-  // 2) Não bloqueia a análise esperando o Firebase Storage. O arquivo é tentado em segundo plano com timeout.
-  const newHandle=`async function handleFile(file){\n  if(!PROJ){ setMsg('data-msg', 'Abra ou crie um projeto antes de importar.', 'warn'); return; }\n  setMsg('data-msg', '<span class="spinner"></span>Lendo o arquivo', 'info');\n  let rows;\n  try{ rows = await readRows(file); }\n  catch(e){ console.error(e); setMsg('data-msg', 'Não foi possível ler o arquivo: ' + esc(e.message), 'err'); return; }\n  if(!rows.length){ setMsg('data-msg', 'O arquivo não tem linhas de dados.', 'err'); return; }\n  const corpus = buildCorpus(rows);\n  if(!corpus.records.length){ setMsg('data-msg', 'Nenhum registro reconhecido. Colunas encontradas: ' + esc(Object.keys(rows[0]).slice(0, 12).join(', ')), 'err'); return; }\n  CORPUS = corpus; RAW_FILE = file;\n\n  // Libera imediatamente as análises: o upload do arquivo bruto não pode travar a sala.\n  setMsg('data-msg', fmt(corpus.records.length) + ' registros lidos (' + esc(corpus.format) + '). Calculando análises…', 'info');\n  renderProjectLine(); renderCorpusUI();\n  computeAll(); renderAll();\n  saveResults().catch(e=>console.warn('Falha ao salvar resultados:',e));\n  showTab('analises');\n\n  const timeout=(p,ms,msg)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error(msg)),ms))]);\n  try{\n    const path = 'users/' + USER.uid + '/projects/' + PROJ.id + '/' + file.name;\n    if(PROJ.file?.path && PROJ.file.path !== path){\n      await Promise.race([storage.ref(PROJ.file.path).delete().catch(()=>{}),new Promise(r=>setTimeout(r,3000))]);\n    }\n    setMsg('data-msg', fmt(corpus.records.length) + ' registros lidos (' + esc(corpus.format) + '). Salvando o arquivo no projeto…', 'info');\n    await timeout(storage.ref(path).put(file,{contentType:file.type||'application/octet-stream'}),12000,'o Storage demorou mais de 12 segundos');\n    await timeout(updateProj({file:{name:file.name,path,size:file.size,records:corpus.records.length,format:corpus.format,uploadedAt:new Date().toISOString()}}),8000,'não foi possível confirmar o arquivo no projeto');\n    setMsg('data-msg', 'Arquivo guardado no projeto: ' + esc(file.name) + '.', 'ok');\n    renderProjectLine(); renderCorpusUI();\n  }catch(e){\n    console.error(e);\n    setMsg('data-msg', fmt(corpus.records.length) + ' registros lidos (' + esc(corpus.format) + '). As análises estão disponíveis. O arquivo bruto não foi guardado no Storage: ' + esc(e.message) + '.', 'warn');\n  }\n}`;
+  // Remove duplicatas reais do SciELO (mesmo título/ano) sem alterar o comportamento do WoS/Scopus.
+  html=html.replace(
+    "  return {format, records, columns: cols};",
+    `  if(isSciELO){
+    const seen=new Set(), clean=[];
+    for(const rec of records){
+      const key=(rec.title||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()+'|'+rec.year;
+      if(!key || !seen.has(key)){ if(key) seen.add(key); clean.push(rec); }
+    }
+    // Unifica pequenas variações de grafia do mesmo autor entre registros do SciELO
+    // (acentos/hífen), preservando a forma visual mais informativa.
+    const amap=new Map(), ascore=a=>(a.match(/[^\\x00-\\x7F]/g)||[]).length;
+    const akey=a=>a.normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().replace(/[-–—]/g,' ').replace(/\\s+/g,' ').trim();
+    clean.forEach(rec=>rec.authors.forEach(a=>{ const k=akey(a), old=amap.get(k); if(!old || ascore(a)>ascore(old)) amap.set(k,a); }));
+    clean.forEach(rec=>{ rec.authors=[...new Set(rec.authors.map(a=>amap.get(akey(a))||a))]; });
+    return {format, records: clean, columns: cols, sourceRows: records.length, duplicatesRemoved: records.length-clean.length};
+  }
+  return {format, records, columns: cols, sourceRows: records.length, duplicatesRemoved: 0};`
+  );
+
+  // ---------- Upload: nunca mais bloqueia a análise ----------
+  const newHandle=`async function handleFile(file){
+  if(!PROJ){ setMsg('data-msg', 'Abra ou crie um projeto antes de importar.', 'warn'); return; }
+  setMsg('data-msg', '<span class="spinner"></span>Lendo o arquivo', 'info');
+  let rows;
+  try{ rows = await readRows(file); }
+  catch(e){ console.error(e); setMsg('data-msg', 'Não foi possível ler o arquivo: ' + esc(e.message), 'err'); return; }
+  if(!rows.length){ setMsg('data-msg', 'O arquivo não tem linhas de dados.', 'err'); return; }
+  const corpus = buildCorpus(rows);
+  if(!corpus.records.length){ setMsg('data-msg', 'Nenhum registro reconhecido. Colunas encontradas: ' + esc(Object.keys(rows[0]).slice(0, 12).join(', ')), 'err'); return; }
+  CORPUS = corpus; RAW_FILE = file;
+
+  const dedup = corpus.duplicatesRemoved ? ' · ' + corpus.duplicatesRemoved + ' duplicata(s) removida(s)' : '';
+  setMsg('data-msg', fmt(corpus.records.length) + ' registros válidos (' + esc(corpus.format) + ')' + dedup + '. Calculando análises…', 'info');
+  renderProjectLine(); renderCorpusUI();
+  computeAll(); renderAll();
+  saveResults().catch(e=>console.warn('Falha ao salvar resultados:',e));
+  showTab('analises');
+
+  const timeout=(p,ms,msg)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error(msg)),ms))]);
+  try{
+    const path = 'users/' + USER.uid + '/projects/' + PROJ.id + '/' + file.name;
+    if(PROJ.file?.path && PROJ.file.path !== path){
+      await Promise.race([storage.ref(PROJ.file.path).delete().catch(()=>{}),new Promise(r=>setTimeout(r,3000))]);
+    }
+    setMsg('data-msg', fmt(corpus.records.length) + ' registros analisados. Salvando o arquivo no projeto…', 'info');
+    await timeout(storage.ref(path).put(file,{contentType:file.type||'application/octet-stream'}),12000,'o Storage demorou mais de 12 segundos');
+    await timeout(updateProj({file:{name:file.name,path,size:file.size,records:corpus.records.length,format:corpus.format,uploadedAt:new Date().toISOString()}}),8000,'não foi possível confirmar o arquivo no projeto');
+    setMsg('data-msg', 'Arquivo guardado no projeto: ' + esc(file.name) + '.', 'ok');
+    renderProjectLine(); renderCorpusUI();
+  }catch(e){
+    console.error(e);
+    setMsg('data-msg', fmt(corpus.records.length) + ' registros analisados (' + esc(corpus.format) + '). O arquivo bruto não foi guardado no Storage: ' + esc(e.message) + '. Isso não impede as análises.', 'warn');
+  }
+}`;
   html=html.replace(/async function handleFile\(file\)\{[\s\S]*?\n\}\nfunction readRows\(file\)\{/,newHandle+'\nfunction readRows(file){');
 
-  // Segurança: se alguma substituição essencial falhar, não entrega uma versão silenciosamente quebrada.
-  if(!html.includes("const isSciELO =") || !html.includes("splitSciELOAuthors") || !html.includes("o Storage demorou mais de 12 segundos")){
-    document.getElementById('boot').innerHTML='<div class="box err"><b>Atualização incompleta.</b><br>O código-base mudou e o patch SciELO não pôde ser aplicado com segurança.</div>';
+  // ---------- SciELO: interface específica e compreensível ----------
+  const scieloPatch=String.raw`
+function sciELORows(){
+  return CORPUS && CORPUS.format==='SciELO' ? CORPUS.records : [];
+}
+function sciELOLanguages(){
+  const m=new Map();
+  sciELORows().forEach(r=>String(r.lang||'').split(/[,;|]/).map(x=>x.trim()).filter(Boolean).forEach(x=>m.set(x,(m.get(x)||0)+1)));
+  return [...m.entries()].sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]));
+}
+function setCardTitle(id,text){
+  const el=document.getElementById(id), card=el && el.closest('.card'), h=card && card.querySelector('.charthead h3, h3');
+  if(h) h.textContent=text;
+  return card;
+}
+function applySciELOView(){
+  if(!CORPUS || CORPUS.format!=='SciELO' || !RESULTS) return;
+  const R=sciELORows(), S=RESULTS.summary, langs=sciELOLanguages();
+  const multi=R.filter(r=>r.authors.length>1).length;
+  const dup=CORPUS.duplicatesRemoved||0;
+
+  const body=document.getElementById('an-body');
+  if(body){
+    let note=document.getElementById('scielo-note');
+    if(!note){
+      note=document.createElement('div'); note.id='scielo-note'; note.className='msg info';
+      body.insertBefore(note,body.firstChild);
+    }
+    note.innerHTML='<b>Leitura correta do SciELO.</b> Este CSV traz título, autores, periódico, idioma, ano e link do artigo. Ele <b>não traz citações, afiliações, países nem áreas temáticas</b>. Por isso a Sala não mostra zeros falsos: usa apenas análises sustentadas pelo arquivo. Os “termos” abaixo são extraídos dos títulos.';
+  }
+
+  // KPIs só com informação que existe no CSV do SciELO.
+  kpis('k-geral',[
+    [fmt(S.documents),'artigos únicos'],
+    [S.yearMin+'–'+S.yearMax,'período'],
+    [fmt(S.authors),'autores'],
+    [fmt(S.journals),'periódicos'],
+    [fmt(langs.length),'idiomas'],
+    [fmt2(S.collabIndex),'autores por artigo'],
+    [fmt1(R.length ? multi/R.length*100 : 0)+'%','artigos em coautoria'],
+    [fmt(dup),'duplicatas removidas']
+  ]);
+
+  // Países e instituições não existem no CSV padrão do SciELO.
+  const pc=setCardTitle('ch-paises','Países — não disponível neste CSV');
+  if(pc){
+    const cb=pc.querySelector('.chartbox'); if(cb) cb.style.display='none';
+    const ip=document.getElementById('i-paises');
+    if(ip) ip.innerHTML='O arquivo exportado pelo SciELO não informa afiliações dos autores. Sem afiliação, não é metodologicamente correto inventar país ou colaboração internacional.';
+  }
+  const ti=document.getElementById('t-inst');
+  if(ti){
+    setCardTitle('t-inst','Instituições — não disponível neste CSV');
+    ti.innerHTML='<tbody><tr><td class="muted">O CSV do SciELO não contém instituições/afiliações. Esta análise fica desativada para evitar resultado enganoso.</td></tr></tbody>';
+  }
+
+  // No SciELO exportado não há keywords. Em vez de um gráfico vazio, usa palavras informativas dos títulos.
+  const kc=setCardTitle('ch-kw','Termos mais frequentes nos títulos');
+  if(kc && !kc.querySelector('.scielo-help')){
+    const p=document.createElement('div'); p.className='small muted scielo-help'; p.style.margin='-2px 0 10px';
+    p.textContent='Derivados automaticamente dos títulos após remoção de palavras muito comuns; não são palavras-chave declaradas pelos autores.';
+    const ch=kc.querySelector('.charthead'); if(ch) ch.insertAdjacentElement('afterend',p);
+  }
+
+  // O segundo painel vira idiomas, que é um campo real do SciELO.
+  setCardTitle('ch-areas','Idiomas dos artigos');
+  hbar('ch-areas',langs.slice(0,15),'Artigos',PAL[5]);
+
+  // Citação não existe no arquivo: mostra os artigos recuperados com link SciELO.
+  const tc=document.getElementById('t-cited');
+  if(tc){
+    setCardTitle('t-cited','Artigos recuperados no SciELO');
+    tc.innerHTML='<thead><tr><th>#</th><th>Ano</th><th>Autores</th><th>Título</th><th>Periódico</th></tr></thead><tbody>'+ 
+      R.slice().sort((a,b)=>b.year-a.year || a.title.localeCompare(b.title)).map((r,i)=>{
+        const ttl=r.url ? '<a href="'+esc(r.url)+'" target="_blank" rel="noopener">'+esc(cut(r.title,100))+'</a>' : esc(cut(r.title,100));
+        return '<tr><td>'+(i+1)+'</td><td>'+r.year+'</td><td>'+esc(cut(r.authors.join('; '),70))+'</td><td>'+ttl+'</td><td>'+esc(cut(r.journal,45))+'</td></tr>';
+      }).join('')+'</tbody>';
+  }
+
+  // Lei de Zipf: deixa claro que a unidade são termos de título, não keywords.
+  setCardTitle('ch-zipf','Lei de Zipf — frequência de termos dos títulos');
+  const kz=document.getElementById('k-zipf');
+  if(kz){
+    const labels=kz.querySelectorAll('.kpi span');
+    if(labels[0]) labels[0].textContent='termos distintos nos títulos';
+  }
+  const iz=document.getElementById('i-zipf');
+  if(iz){
+    const Z=RESULTS.zipf;
+    iz.innerHTML=Z.table.length<5
+      ? 'Há poucos termos recorrentes nos títulos para avaliar Zipf com estabilidade. Use este resultado apenas como exploração.'
+      : 'No SciELO, este arquivo não fornece palavras-chave. Portanto, a análise de Zipf foi aplicada aos <b>termos informativos dos títulos</b>. Inclinação log-log = <b>'+fmt2(Z.slope)+'</b> e R² = '+fmt2(Z.r2)+'. Com apenas '+fmt(R.length)+' artigos, interprete como exercício exploratório, não como evidência conclusiva.';
+  }
+
+  // Amostras pequenas: evita interpretações excessivas das leis.
+  if(R.length<30){
+    const il=document.getElementById('i-lotka');
+    if(il) il.innerHTML += ' <b>Atenção:</b> o corpus SciELO tem apenas '+fmt(R.length)+' artigos; trate o ajuste de Lotka como exploratório.';
+    const ib=document.getElementById('i-bradford');
+    if(ib) ib.innerHTML += ' <b>Atenção:</b> com '+fmt(R.length)+' artigos, as zonas de Bradford são apenas descritivas.';
+  }
+
+  // Redes: mantém apenas o que o CSV permite e usa mínimo 1 em corpus pequeno.
+  const nt=document.getElementById('net-type');
+  if(nt){
+    [...nt.options].forEach(o=>{ if(o.value==='country'||o.value==='institution') o.remove(); });
+    const kw=[...nt.options].find(o=>o.value==='keyword'); if(kw) kw.textContent='Termos dos títulos';
+    if(!['author','keyword'].includes(nt.value)) nt.value='author';
+  }
+  const nm=document.getElementById('net-min'); if(nm && +nm.value>1) nm.value='1';
+  const netCard=document.getElementById('netsvg')?.closest('.card');
+  if(netCard){
+    const lead=netCard.querySelector('.lead');
+    if(lead) lead.textContent='No SciELO, a rede disponível é de coautoria ou de coocorrência de termos dos títulos. Países e instituições não são calculados porque o CSV não contém afiliações.';
+  }
+  renderNetwork();
+}
+`;
+
+  const lastScript=html.lastIndexOf('</script>');
+  if(lastScript<0) throw new Error('script principal não encontrado');
+  html=html.slice(0,lastScript)+scieloPatch+`
+const __renderAllOriginal=renderAll;
+renderAll=function(){
+  __renderAllOriginal();
+  if(typeof CORPUS!=='undefined' && CORPUS && CORPUS.format==='SciELO') applySciELOView();
+};
+`+html.slice(lastScript);
+
+  // Segurança: não publica silenciosamente se um patch essencial não entrou.
+  const checks=[
+    "const isSciELO =",
+    "splitSciELOAuthors",
+    "duplicatesRemoved",
+    "o Storage demorou mais de 12 segundos",
+    "function applySciELOView",
+    "Termos mais frequentes nos títulos",
+    "Artigos recuperados no SciELO"
+  ];
+  const missing=checks.filter(x=>!html.includes(x));
+  if(missing.length){
+    document.getElementById('boot').innerHTML='<div class="box err"><b>Atualização incompleta.</b><br>O código-base mudou e o patch SciELO não pôde ser aplicado com segurança.<br><small>'+missing.join(', ')+'</small></div>';
     return;
   }
 
