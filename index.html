@@ -19,16 +19,22 @@ html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,"Se
   ];
   let html='', lastErr='';
   for(const url of sources){
+    const ctl=new AbortController();
+    const timer=setTimeout(()=>ctl.abort(),4500);
     try{
-      const r=await fetch(url,{cache:'no-store'});
+      const r=await fetch(url,{cache:'no-store',signal:ctl.signal});
+      clearTimeout(timer);
       if(!r.ok) throw new Error(`HTTP ${r.status}`);
       html=await r.text();
       if(html.includes('function buildCorpus(rows)')) break;
       html='';
-    }catch(e){lastErr=e.message;}
+    }catch(e){
+      clearTimeout(timer);
+      lastErr=e?.name==='AbortError' ? 'tempo de carregamento esgotado' : (e?.message||String(e));
+    }
   }
   if(!html){
-    document.getElementById('boot').innerHTML=`<div class="box err"><b>Não foi possível carregar a aplicação.</b><br>${lastErr||'Falha ao carregar o código-base.'}<br><br>Atualize a página em alguns instantes.</div>`;
+    document.getElementById('boot').innerHTML=`<div class="box err"><b>Não foi possível carregar a aplicação.</b><br>${lastErr||'Falha ao carregar o código-base.'}<br><br>Pressione Ctrl + F5. Se persistir, tente novamente em alguns instantes.</div>`;
     return;
   }
 
