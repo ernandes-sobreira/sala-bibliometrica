@@ -29,7 +29,7 @@ html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,"Se
   if(!src){document.getElementById('boot').innerHTML='<div class="box err"><b>Não foi possível carregar a aplicação.</b><br>'+last+'</div>';return;}
 
   const needle='document.open();document.write(html);document.close();';
-  const replacement=`try{\n    const editorPatch=await fetchText('./editor-patch.js?v=20261001e',5000);\n    const marker='/* ---------- importação e parser ---------- */';\n    if(editorPatch&&html.includes(marker)) html=html.replace(marker,editorPatch+'\\n'+marker);\n  }catch(e){console.warn('Editor não carregado:',e);}\n  document.open();document.write(html);document.close();`;
+  const replacement=`try{\n    const editorPatch=await fetchText('./editor-patch.js?v=20261001f',5000);\n    const marker='/* ---------- importação e parser ---------- */';\n    if(editorPatch&&html.includes(marker)){ new Function(editorPatch); html=html.replace(marker,editorPatch+'\\n'+marker); }\n  }catch(e){console.warn('Editor não carregado:',e);}\n  document.open();document.write(html);document.close();`;
   if(!src.includes(needle)){document.getElementById('boot').innerHTML='<div class="box err"><b>Não foi possível acoplar o editor.</b><br>A versão-base mudou; nenhum dado foi alterado.</div>';return;}
   src=src.replace(needle,replacement);
   document.open();document.write(src);document.close();
