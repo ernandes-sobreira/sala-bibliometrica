@@ -1,11 +1,12 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sala Bibliométrica</title>
 <style>
-html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;background:#f6f8fa;color:#1a2332}.boot{min-height:100vh;display:grid;place-items:center}.box{background:#fff;border:1px solid #e3e8ee;border-radius:14px;padding:28px 32px;max-width:560px;box-shadow:0 12px 36px rgba(26,35,50,.08)}.spin{display:inline-block;width:18px;height:18px;border:2px solid #cfd8e2;border-top-color:#56B4E9;border-radius:50%;animation:s .8s linear infinite;vertical-align:middle;margin-right:10px}@keyframes s{to{transform:rotate(360deg)}}.err{color:#b23a3a;line-height:1.5}
+html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;background:#f6f8fa;color:#1a2332}
+.boot{min-height:100vh;display:grid;place-items:center}.box{background:#fff;border:1px solid #e3e8ee;border-radius:14px;padding:28px 32px;max-width:620px;box-shadow:0 12px 36px rgba(26,35,50,.08)}
+.spin{display:inline-block;width:18px;height:18px;border:2px solid #cfd8e2;border-top-color:#56B4E9;border-radius:50%;animation:s .8s linear infinite;vertical-align:middle;margin-right:10px}@keyframes s{to{transform:rotate(360deg)}}.err{color:#b23a3a;line-height:1.5}
 </style>
 </head>
 <body>
@@ -17,56 +18,156 @@ html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,"Se
     `https://raw.githubusercontent.com/ernandes-sobreira/sala-bibliometrica/${BASE_COMMIT}/index.html`,
     `https://cdn.jsdelivr.net/gh/ernandes-sobreira/sala-bibliometrica@${BASE_COMMIT}/index.html`
   ];
-  let html='', lastErr='';
+  const fetchText=async(url,ms=5000)=>{
+    const ctl=new AbortController(), timer=setTimeout(()=>ctl.abort(),ms);
+    try{ const r=await fetch(url,{cache:'no-store',signal:ctl.signal}); if(!r.ok) throw new Error('HTTP '+r.status); return await r.text(); }
+    finally{ clearTimeout(timer); }
+  };
+  let html='',lastErr='';
   for(const url of sources){
-    const ctl=new AbortController();
-    const timer=setTimeout(()=>ctl.abort(),4500);
-    try{
-      const r=await fetch(url,{cache:'no-store',signal:ctl.signal});
-      clearTimeout(timer);
-      if(!r.ok) throw new Error(`HTTP ${r.status}`);
-      html=await r.text();
-      if(html.includes('function buildCorpus(rows)')) break;
-      html='';
-    }catch(e){
-      clearTimeout(timer);
-      lastErr=e?.name==='AbortError' ? 'tempo de carregamento esgotado' : (e?.message||String(e));
-    }
+    try{ html=await fetchText(url,5000); if(html.includes('function buildCorpus(rows)')) break; html=''; }
+    catch(e){ lastErr=e.name==='AbortError'?'tempo esgotado':String(e.message||e); html=''; }
   }
-  if(!html){
-    document.getElementById('boot').innerHTML=`<div class="box err"><b>Não foi possível carregar a aplicação.</b><br>${lastErr||'Falha ao carregar o código-base.'}<br><br>Pressione Ctrl + F5. Se persistir, tente novamente em alguns instantes.</div>`;
-    return;
-  }
+  if(!html){ document.getElementById('boot').innerHTML=`<div class="box err"><b>Não foi possível carregar a aplicação.</b><br>${lastErr||'Falha de carregamento.'}<br><br>Recarregue a página.</div>`; return; }
 
+  // -------- parser SciELO --------
   html=html.replace(
     "function splitSep(str, sep){ if(!str) return []; return String(str).split(sep).map(s => s.trim()).filter(Boolean); }",
-    `function splitSep(str, sep){ if(!str) return []; return String(str).split(sep).map(s => s.trim()).filter(Boolean); }\nfunction splitSciELOAuthors(str){\n  if(!str) return [];\n  const p=String(str).split(',').map(s=>s.trim()).filter(Boolean), out=[];\n  for(let i=0;i<p.length;i+=2){ out.push(p[i+1] ? p[i]+', '+p[i+1] : p[i]); }\n  return [...new Set(out.map(a=>a.replace(/\\s+/g,' ').trim()).filter(Boolean))];\n}`
+    `function splitSep(str, sep){ if(!str) return []; return String(str).split(sep).map(s => s.trim()).filter(Boolean); }
+function decodeSciELO(v){ if(v==null)return ''; const t=document.createElement('textarea'); t.innerHTML=String(v); return t.value.replace(/\\s+/g,' ').trim(); }
+function canonicalSciELOAuthor(v){ return decodeSciELO(v).replace(/[–—]/g,'-').replace(/-\\s*(Júnior|Junior|Filho|Neto),/i,' $1,').replace(/\\bJúnior\\b/g,'Junior').replace(/\\s+/g,' ').trim(); }
+function splitSciELOAuthors(str){
+  if(!str) return [];
+  const p=decodeSciELO(str).split(',').map(s=>s.trim()).filter(Boolean), out=[];
+  for(let i=0;i<p.length;i+=2){ const a=canonicalSciELOAuthor(p[i+1]?p[i]+', '+p[i+1]:p[i]); if(a)out.push(a); }
+  return [...new Set(out)];
+}`
   );
-
   html=html.replace(
     "  const isPubMed = cols.includes('PMID') && cols.includes('Journal/Book');\n  const format = isWoSFull ? 'Web of Science' : isWoSShort ? 'Web of Science (campos curtos)' : isScopus ? 'Scopus' : isPubMed ? 'PubMed' : 'formato genérico';",
     "  const isPubMed = cols.includes('PMID') && cols.includes('Journal/Book');\n  const isSciELO = cols.includes('Title') && cols.includes('Author(s)') && cols.includes('Publication year') && (cols.includes('Journal') || cols.includes('Source'));\n  const format = isWoSFull ? 'Web of Science' : isWoSShort ? 'Web of Science (campos curtos)' : isScopus ? 'Scopus' : isPubMed ? 'PubMed' : isSciELO ? 'SciELO' : 'formato genérico';"
   );
-
   html=html.replace(
     "    else if(isPubMed) o = {authors: splitSep(r['Authors'], ','), title: r['Title'], journal: r['Journal/Book'], year: r['Publication Year'], keywords: [], kwplus: [], area: [], affil: '', addresses: '', citations: '', doi: r['DOI'], doctype: '', lang: ''};\n    else o = {authors: splitSep(g(r,'AU','Authors','Author'), ';'), title: g(r,'TI','Article Title','Title'), journal: g(r,'SO','Source Title','Source title','Journal'), year: g(r,'PY','Publication Year','Year'), keywords: splitSep(g(r,'DE','Author Keywords','Keywords'), ';'), kwplus: splitSep(g(r,'ID','Keywords Plus'), ';'), area: splitSep(g(r,'WC','WoS Categories','Research Areas','Subject'), ';'), affil: g(r,'C1','Affiliations','Addresses'), addresses: g(r,'C1','Addresses','Affiliations'), citations: g(r,'TC','Times Cited, WoS Core','Cited by'), doi: g(r,'DI','DOI'), doctype: g(r,'DT','Document Type'), lang: g(r,'LA','Language')};",
-    "    else if(isPubMed) o = {authors: splitSep(r['Authors'], ','), title: r['Title'], journal: r['Journal/Book'], year: r['Publication Year'], keywords: [], kwplus: [], area: [], affil: '', addresses: '', citations: '', doi: r['DOI'], doctype: '', lang: ''};\n    else if(isSciELO) o = {authors: splitSciELOAuthors(r['Author(s)']), title: r['Title'], journal: r['Journal'] || r['Source'], year: r['Publication year'], keywords: splitSep(g(r,'Keywords','Palavras-chave','Palavras chave'), /;|\\|/), kwplus: [], area: [], affil: '', addresses: '', citations: 0, doi: g(r,'DOI'), doctype: '', lang: r['Language(s)'] || ''};\n    else o = {authors: splitSep(g(r,'AU','Authors','Author'), ';'), title: g(r,'TI','Article Title','Title'), journal: g(r,'SO','Source Title','Source title','Journal'), year: g(r,'PY','Publication Year','Year'), keywords: splitSep(g(r,'DE','Author Keywords','Keywords'), ';'), kwplus: splitSep(g(r,'ID','Keywords Plus'), ';'), area: splitSep(g(r,'WC','WoS Categories','Research Areas','Subject'), ';'), affil: g(r,'C1','Affiliations','Addresses'), addresses: g(r,'C1','Addresses','Affiliations'), citations: g(r,'TC','Times Cited, WoS Core','Cited by'), doi: g(r,'DI','DOI'), doctype: g(r,'DT','Document Type'), lang: g(r,'LA','Language')};"
+    "    else if(isPubMed) o = {authors: splitSep(r['Authors'], ','), title: r['Title'], journal: r['Journal/Book'], year: r['Publication Year'], keywords: [], kwplus: [], area: [], affil: '', addresses: '', citations: '', doi: r['DOI'], doctype: '', lang: ''};\n    else if(isSciELO) o = {authors: splitSciELOAuthors(r['Author(s)']), title: decodeSciELO(r['Title']), journal: decodeSciELO(r['Journal'] || r['Source']), year: r['Publication year'], keywords: [], kwplus: [], area: [], affil: '', addresses: '', citations: 0, doi: '', doctype: 'Article', lang: decodeSciELO(r['Language(s)']), url: String(r['Fulltext URL']||'').trim(), scieloId:String(r['ID']||'').trim(), countries:[], institutions:[]};\n    else o = {authors: splitSep(g(r,'AU','Authors','Author'), ';'), title: g(r,'TI','Article Title','Title'), journal: g(r,'SO','Source Title','Source title','Journal'), year: g(r,'PY','Publication Year','Year'), keywords: splitSep(g(r,'DE','Author Keywords','Keywords'), ';'), kwplus: splitSep(g(r,'ID','Keywords Plus'), ';'), area: splitSep(g(r,'WC','WoS Categories','Research Areas','Subject'), ';'), affil: g(r,'C1','Affiliations','Addresses'), addresses: g(r,'C1','Addresses','Affiliations'), citations: g(r,'TC','Times Cited, WoS Core','Cited by'), doi: g(r,'DI','DOI'), doctype: g(r,'DT','Document Type'), lang: g(r,'LA','Language')};"
   );
 
-  const newHandle=`async function handleFile(file){\n  if(!PROJ){ setMsg('data-msg', 'Abra ou crie um projeto antes de importar.', 'warn'); return; }\n  setMsg('data-msg', '<span class="spinner"></span>Lendo o arquivo', 'info');\n  let rows;\n  try{ rows = await readRows(file); }\n  catch(e){ console.error(e); setMsg('data-msg', 'Não foi possível ler o arquivo: ' + esc(e.message), 'err'); return; }\n  if(!rows.length){ setMsg('data-msg', 'O arquivo não tem linhas de dados.', 'err'); return; }\n  const corpus = buildCorpus(rows);\n  if(!corpus.records.length){ setMsg('data-msg', 'Nenhum registro reconhecido. Colunas encontradas: ' + esc(Object.keys(rows[0]).slice(0, 12).join(', ')), 'err'); return; }\n  CORPUS = corpus; RAW_FILE = file;\n\n  setMsg('data-msg', fmt(corpus.records.length) + ' registros lidos (' + esc(corpus.format) + '). Calculando análises…', 'info');\n  renderProjectLine(); renderCorpusUI();\n  computeAll(); renderAll();\n  saveResults().catch(e=>console.warn('Falha ao salvar resultados:',e));\n  showTab('analises');\n\n  const timeout=(p,ms,msg)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error(msg)),ms))]);\n  try{\n    const path = 'users/' + USER.uid + '/projects/' + PROJ.id + '/' + file.name;\n    if(PROJ.file?.path && PROJ.file.path !== path){\n      await Promise.race([storage.ref(PROJ.file.path).delete().catch(()=>{}),new Promise(r=>setTimeout(r,3000))]);\n    }\n    setMsg('data-msg', fmt(corpus.records.length) + ' registros lidos (' + esc(corpus.format) + '). Salvando o arquivo no projeto…', 'info');\n    await timeout(storage.ref(path).put(file,{contentType:file.type||'application/octet-stream'}),12000,'o Storage demorou mais de 12 segundos');\n    await timeout(updateProj({file:{name:file.name,path,size:file.size,records:corpus.records.length,format:corpus.format,uploadedAt:new Date().toISOString()}}),8000,'não foi possível confirmar o arquivo no projeto');\n    setMsg('data-msg', 'Arquivo guardado no projeto: ' + esc(file.name) + '.', 'ok');\n    renderProjectLine(); renderCorpusUI();\n  }catch(e){\n    console.error(e);\n    setMsg('data-msg', fmt(corpus.records.length) + ' registros lidos (' + esc(corpus.format) + '). As análises estão disponíveis. O arquivo bruto não foi guardado no Storage: ' + esc(e.message) + '.', 'warn');\n  }\n}`;
+  // -------- enriquecimento OpenAlex --------
+  const enrichCode=String.raw`
+const SCIELO_STOP=new Set(('a o os as um uma de da do das dos e em no na nos nas por para com sem sobre entre ao aos que se sua seu suas seus the of and in on for to from by with without an is are be as at or into using use via el la los las del y en un una al this that these those study analysis assessment case role effect effects').split(/\s+/));
+function scNorm(s){return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/&[a-z]+;/g,' ').replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();}
+function scTokens(s){return new Set(scNorm(s).split(' ').filter(x=>x.length>2&&!SCIELO_STOP.has(x)));}
+function scSimilarity(a,b){
+  const A=scTokens(a),B=scTokens(b); if(!A.size||!B.size)return 0;
+  let inter=0; A.forEach(x=>{if(B.has(x))inter++});
+  const j=inter/(A.size+B.size-inter), c=2*inter/(A.size+B.size);
+  return Math.max(j,c);
+}
+function scTitleTerms(title){
+  return [...scTokens(title)].filter(x=>x.length>=4).slice(0,12);
+}
+function scCountryName(code){
+  if(!code)return ''; try{return new Intl.DisplayNames(['pt-BR'],{type:'region'}).of(String(code).toUpperCase())||code;}catch(e){return code;}
+}
+async function scFetchJSON(url,ms=9000){
+  const ctl=new AbortController(), timer=setTimeout(()=>ctl.abort(),ms);
+  try{const r=await fetch(url,{signal:ctl.signal,headers:{Accept:'application/json'}}); if(!r.ok)throw new Error('HTTP '+r.status); return await r.json();}
+  finally{clearTimeout(timer);}
+}
+async function enrichOneSciELO(rec){
+  const q=encodeURIComponent(rec.title), yr=parseInt(rec.year)||0;
+  const filter=yr?'&filter=publication_year:'+yr:'';
+  const select='id,doi,display_name,publication_year,cited_by_count,authorships,keywords,topics,primary_topic,referenced_works,primary_location';
+  const url='https://api.openalex.org/works?search='+q+filter+'&per-page=5&select='+encodeURIComponent(select);
+  const data=await scFetchJSON(url,9000);
+  const cand=(data.results||[]).map(w=>({w,score:scSimilarity(rec.title,w.display_name)+(parseInt(w.publication_year)===yr?.12:0)})).sort((a,b)=>b.score-a.score)[0];
+  if(!cand||cand.score<0.67)throw new Error('sem correspondência segura');
+  const w=cand.w, inst=[], countries=[];
+  (w.authorships||[]).forEach(a=>{
+    (a.institutions||[]).forEach(i=>{if(i&&i.display_name)inst.push(i.display_name); if(i&&i.country_code)countries.push(scCountryName(i.country_code));});
+    (a.countries||[]).forEach(c=>countries.push(scCountryName(c)));
+  });
+  rec.institutions=[...new Set(inst.filter(Boolean))];
+  rec.countries=[...new Set(countries.filter(Boolean))];
+  rec.citations=Number(w.cited_by_count)||0;
+  rec.doi=String(w.doi||'').replace(/^https?:\/\/doi\.org\//i,'');
+  let kws=(w.keywords||[]).map(k=>k&&k.display_name).filter(Boolean);
+  if(!kws.length) kws=(w.topics||[]).filter(t=>(t.score??1)>=.35).map(t=>t&&t.display_name).filter(Boolean).slice(0,10);
+  if(!kws.length) kws=scTitleTerms(rec.title);
+  rec.keywords=[...new Set(kws)].slice(0,12);
+  const areas=[];
+  if(w.primary_topic&&w.primary_topic.field&&w.primary_topic.field.display_name)areas.push(w.primary_topic.field.display_name);
+  (w.topics||[]).forEach(t=>{if(t&&t.field&&t.field.display_name)areas.push(t.field.display_name);});
+  rec.area=[...new Set(areas.filter(Boolean))].slice(0,6);
+  rec.openalexId=w.id||''; rec.referencedWorks=w.referenced_works||[]; rec.enriched=true; rec.enrichmentSource='OpenAlex';
+  return rec;
+}
+function dedupeSciELO(records){
+  const seen=new Set(),out=[];
+  for(const r of records){const k=scNorm(r.title)+'|'+r.year; if(k&&seen.has(k))continue; if(k)seen.add(k); out.push(r);} return out;
+}
+async function enrichSciELOCorpus(corpus,onProgress){
+  corpus.records=dedupeSciELO(corpus.records);
+  let ok=0,fail=0,next=0; const total=corpus.records.length;
+  async function worker(){
+    while(true){const i=next++; if(i>=total)return; const r=corpus.records[i];
+      try{await enrichOneSciELO(r);ok++;}catch(e){fail++; r.keywords=scTitleTerms(r.title); r.enriched=false; r.enrichmentError=String(e.message||e);}
+      if(onProgress)onProgress(ok+fail,total,ok,fail);
+    }
+  }
+  await Promise.all(Array.from({length:Math.min(3,total)},worker));
+  corpus.enrichment={matched:ok,unmatched:fail,total,source:'OpenAlex'}; return corpus;
+}
+function adaptSciELOUI(){
+  if(!CORPUS||CORPUS.format!=='SciELO'||!RESULTS)return;
+  const e=CORPUS.enrichment||{matched:0,unmatched:CORPUS.records.length,total:CORPUS.records.length};
+  const body=document.getElementById('an-body');
+  if(body){let n=document.getElementById('scielo-enrich-note'); if(!n){n=document.createElement('div');n.id='scielo-enrich-note';n.className='msg info';body.insertBefore(n,body.firstChild);} n.innerHTML='<b>SciELO enriquecido:</b> '+e.matched+' de '+e.total+' artigos encontrados com correspondência segura no OpenAlex. Países, instituições, citações e áreas vêm do OpenAlex; título, autores, periódico, idioma e ano vêm do CSV SciELO. Itens não encontrados não são inventados.';}
+  const kw=document.getElementById('ch-kw')?.closest('.card')?.querySelector('.charthead h3'); if(kw)kw.textContent='Palavras-chave / termos temáticos';
+  const ar=document.getElementById('ch-areas')?.closest('.card')?.querySelector('.charthead h3'); if(ar)ar.textContent='Áreas de pesquisa (OpenAlex)';
+  const ip=document.getElementById('i-paises'); if(ip){const n=RESULTS.summary.withCountry||0; ip.innerHTML=n?('Países recuperados a partir das afiliações institucionais do OpenAlex em <b>'+n+'</b> documentos.'):('Nenhum país pôde ser confirmado no enriquecimento.');}
+}
+`;
+  html=html.replace('async function handleFile(file){',enrichCode+'\nasync function handleFile(file){');
+
+  // -------- handleFile: SciELO enriquece antes de calcular --------
+  const newHandle=String.raw`async function handleFile(file){
+  if(!PROJ){setMsg('data-msg','Abra ou crie um projeto antes de importar.','warn');return;}
+  setMsg('data-msg','<span class="spinner"></span>Lendo o arquivo','info');
+  let rows; try{rows=await readRows(file);}catch(e){console.error(e);setMsg('data-msg','Não foi possível ler o arquivo: '+esc(e.message),'err');return;}
+  if(!rows.length){setMsg('data-msg','O arquivo não tem linhas de dados.','err');return;}
+  let corpus=buildCorpus(rows);
+  if(!corpus.records.length){setMsg('data-msg','Nenhum registro reconhecido. Colunas encontradas: '+esc(Object.keys(rows[0]).slice(0,12).join(', ')),'err');return;}
+  CORPUS=corpus; RAW_FILE=file;
+  if(corpus.format==='SciELO'){
+    setMsg('data-msg','<span class="spinner"></span>'+fmt(corpus.records.length)+' registros SciELO lidos. Enriquecendo países, instituições, citações e áreas…','info');
+    try{await enrichSciELOCorpus(corpus,(done,total,ok,fail)=>setMsg('data-msg','<span class="spinner"></span>Enriquecendo SciELO: '+done+'/'+total+' · '+ok+' encontrados · '+fail+' não encontrados','info'));}
+    catch(e){console.error('SciELO enrichment:',e); corpus.enrichment={matched:0,unmatched:corpus.records.length,total:corpus.records.length,source:'OpenAlex',error:String(e.message||e)};}
+  }
+  CORPUS=corpus;
+  setMsg('data-msg',fmt(corpus.records.length)+' registros prontos ('+esc(corpus.format)+'). Calculando análises…','info');
+  renderProjectLine();renderCorpusUI();computeAll();renderAll();adaptSciELOUI();
+  saveResults().catch(e=>console.warn('Falha ao salvar resultados:',e)); showTab('analises');
+  const timeout=(p,ms,msg)=>Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error(msg)),ms))]);
+  try{
+    const path='users/'+USER.uid+'/projects/'+PROJ.id+'/'+file.name;
+    if(PROJ.file?.path&&PROJ.file.path!==path)await Promise.race([storage.ref(PROJ.file.path).delete().catch(()=>{}),new Promise(r=>setTimeout(r,3000))]);
+    await timeout(storage.ref(path).put(file,{contentType:file.type||'application/octet-stream'}),12000,'o Storage demorou mais de 12 segundos');
+    await timeout(updateProj({file:{name:file.name,path,size:file.size,records:corpus.records.length,format:corpus.format,uploadedAt:new Date().toISOString()}}),8000,'não foi possível confirmar o arquivo no projeto');
+    const ep=corpus.enrichment; setMsg('data-msg','Arquivo guardado no projeto.'+(ep?' Enriquecimento SciELO: '+ep.matched+'/'+ep.total+' artigos.':''),'ok');
+    renderProjectLine();renderCorpusUI();
+  }catch(e){console.error(e);setMsg('data-msg',fmt(corpus.records.length)+' registros analisados. O arquivo bruto não foi guardado no Storage: '+esc(e.message)+'. Isso não impede as análises.','warn');}
+}`;
   html=html.replace(/async function handleFile\(file\)\{[\s\S]*?\n\}\nfunction readRows\(file\)\{/,newHandle+'\nfunction readRows(file){');
 
-  if(!html.includes("const isSciELO =") || !html.includes("splitSciELOAuthors") || !html.includes("o Storage demorou mais de 12 segundos")){
-    document.getElementById('boot').innerHTML='<div class="box err"><b>Atualização incompleta.</b><br>O código-base mudou e o patch SciELO não pôde ser aplicado com segurança.</div>';
-    return;
-  }
+  // Também adapta quando resultados forem renderizados novamente (troca de aba etc.).
+  html=html.replace("  renderNetwork();\n  $('#save-status').textContent = '';", "  renderNetwork();\n  adaptSciELOUI();\n  $('#save-status').textContent = '';");
 
-  document.open();
-  document.write(html);
-  document.close();
-})().catch(e=>{
-  document.getElementById('boot').innerHTML='<div class="box err"><b>Erro ao iniciar a Sala.</b><br>'+String(e.message||e)+'</div>';
-});
+  if(!html.includes('enrichSciELOCorpus')||!html.includes("isSciELO ? 'SciELO'")||!html.includes('o Storage demorou mais de 12 segundos')){
+    document.getElementById('boot').innerHTML='<div class="box err"><b>Atualização SciELO não aplicada.</b><br>O código-base mudou. Nenhum dado foi alterado.</div>'; return;
+  }
+  document.open();document.write(html);document.close();
+})().catch(e=>{document.getElementById('boot').innerHTML='<div class="box err"><b>Erro ao iniciar a Sala.</b><br>'+String(e.message||e)+'</div>';});
 </script>
 </body>
 </html>
