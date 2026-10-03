@@ -369,6 +369,8 @@ table.t th.n{text-align:right}
         <div class="lead">Aceita CSV, XLSX e TXT delimitado por tabulação exportados do Web of Science, Scopus, SciELO ou PubMed. O arquivo é lido no navegador e enviado ao seu projeto.</div>
         <div class="drop" id="drop" onclick="document.getElementById('file').click()"><b>Arraste o arquivo aqui ou clique para selecionar</b><span>CSV, XLSX, XLS ou TXT</span></div>
         <input type="file" id="file" accept=".csv,.xlsx,.xls,.txt,.tsv" class="hidden">
+        <div id="add-base-row" class="hidden" style="margin-top:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><button class="btn" type="button" onclick="document.getElementById('file-add').click()">Adicionar outra base a este corpus</button><span class="small muted">Projeto integrado: junte Web of Science, Scopus, PubMed e SciELO. Documentos repetidos entre bases são unidos.</span></div>
+        <input type="file" id="file-add" accept=".csv,.xlsx,.xls,.txt,.tsv" class="hidden" onchange="if(this.files[0]){handleAddFile(this.files[0]);this.value='';}">
         <div id="data-msg"></div>
       </div>
       <div id="data-summary" class="hidden">
@@ -376,6 +378,13 @@ table.t th.n{text-align:right}
           <h3>Corpus</h3>
           <div class="kpis" id="corpus-kpis"></div>
           <div id="corpus-fields" style="margin-top:10px"></div>
+        </div>
+        <div class="card hidden" id="bases-card">
+          <h3>Bases do corpus</h3>
+          <div class="lead">Quantos documentos vieram de cada base e quantos se repetem entre elas. Cada documento repetido é contado uma única vez nas análises.</div>
+          <div class="kpis" id="k-bases"></div>
+          <div class="tscroll" style="margin-top:12px"><table class="t" id="t-bases"></table></div>
+          <div id="bases-files" style="margin-top:12px"></div>
         </div>
         <div class="card">
           <div class="charthead"><h3>Primeiros registros</h3><span class="small muted" id="preview-count"></span></div>
@@ -424,6 +433,11 @@ table.t th.n{text-align:right}
       <div id="an-empty" class="empty"><h3>Sem corpus</h3>Importe um arquivo na aba Dados.</div>
       <div id="an-body" class="hidden">
         <div class="card"><h3>Visão geral</h3><div class="kpis" id="k-geral"></div></div>
+        <div class="card hidden" id="bases-an">
+          <div class="charthead"><h3>Bases de dados do corpus</h3><button class="btn sm" onclick="dlChart('ch-bases','bases')">Baixar PNG</button></div>
+          <div class="chartbox" style="height:220px"><canvas id="ch-bases"></canvas></div>
+          <div class="interp" id="i-bases"></div>
+        </div>
         <div class="card">
           <div class="charthead"><h3>Produção anual</h3><button class="btn sm" onclick="dlChart('ch-temporal','producao-anual')">Baixar PNG</button></div>
           <div class="chartbox"><canvas id="ch-temporal"></canvas></div>
@@ -597,7 +611,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.5.0";
+const APP_VERSION = "1.6.0";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -955,6 +969,31 @@ function edDupKey(field,v){
   if(field==='journal')return n.replace(/\b(journal|jornal)\b/g,'j').replace(/\b(revista|review)\b/g,'rev').replace(/\b(the|of|and|de|da|do|e|em|in|for)\b/g,' ').replace(/\s+/g,' ').trim()||n;
   return n;
 }
+function edSafeKey(field,v){
+  if(field!=='authors')return edNorm(v);
+  const s0=String(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();if(!s0)return '';
+  let sur=s0,giv='';
+  if(s0.includes(',')){sur=s0.split(',')[0];giv=s0.split(',').slice(1).join(' ');}
+  else{const t=s0.split(' ');if(t.length>1&&/^[A-Z](\.?[A-Z]){0,3}\.?$/.test(t[t.length-1])){giv=t.pop();sur=t.join(' ');}else return edNorm(v);}
+  return sur.toLowerCase().replace(/[^a-z]/g,'')+'|'+giv.toLowerCase().replace(/[^a-z]/g,'');
+}
+function edBulkGroups(field){
+  const groups=new Map();
+  for(const [v,n] of edValues(field)){
+    const rv=String(edResolve(field,v)).trim();if(!rv)continue;const key=edSafeKey(field,rv);if(!key)continue;
+    let g=groups.get(key);if(!g){g=new Map();groups.set(key,g);}
+    let x=g.get(rv);if(!x){x={n:0,bases:[]};g.set(rv,x);}x.n+=n;x.bases.push(v);
+  }
+  return [...groups.values()].filter(g=>g.size>1).map(g=>[...g.entries()].sort((a,b)=>b[1].n-a[1].n||b[0].length-a[0].length));
+}
+async function edBulkMerge(){
+  const field=document.getElementById('ed-field')?.value;if(!field)return;const gs=edBulkGroups(field);
+  if(!gs.length){if(typeof toast==='function')toast('Não há grafias equivalentes para unir neste campo.');return;}
+  if(!confirm('Unir '+gs.length+' grupo(s) de grafias equivalentes em '+ED_FIELDS[field].label+'? São nomes que só diferem em maiúsculas, acentos, pontos, vírgulas ou espaços. Cada grupo passa a usar a grafia mais frequente. Você pode desfazer em Correções ativas.'))return;
+  const rules=edRuleStore()[field];
+  gs.forEach(vs=>{const to=vs[0][0];vs.forEach(([rv,x])=>x.bases.forEach(v=>{if(v!==to||rv!==to)rules[edNorm(v)]={from:v,to,remove:false,updatedAt:new Date().toISOString()};}));});
+  await edPersistRules();edRecompute(gs.length+' grupo(s) de grafias equivalentes foram unidos. Análises recalculadas.');
+}
 function edIgnoreStore(){const r=edRuleStore();if(!r.__ignore||typeof r.__ignore!=='object')r.__ignore={};return r.__ignore;}
 function edSuggest(field){
   const groups=new Map(),ign=edIgnoreStore()[field]||{};
@@ -975,6 +1014,7 @@ function edRenderSuggest(){
   const box=document.getElementById('ed-suggest');if(!box)return;
   const field=document.getElementById('ed-field')?.value||'authors';ED_SUG=edSuggest(field);
   const head=document.getElementById('ed-suggest-n');if(head)head.textContent=ED_SUG.length?'('+ED_SUG.length+')':'';
+  const bb=document.getElementById('ed-bulk');if(bb){const nb=edBulkGroups(field).length;bb.textContent='Unir grafias equivalentes ('+nb+')';bb.disabled=!nb;}
   if(!ED_SUG.length){box.innerHTML='<span class="small muted">Nenhum possível duplicado encontrado neste campo.</span>';return;}
   const warn=field==='authors'?'<div class="small muted" style="margin-bottom:8px">Em autores, a sugestão compara sobrenome e primeira inicial. Confira antes de unir: podem ser pessoas diferentes.</div>':'';
   box.innerHTML=warn+ED_SUG.slice(0,60).map((g,i)=>'<div style="padding:10px 0;border-bottom:1px solid #edf0f3"><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">'+g.variants.map(([v,x])=>'<span class="pill">'+edEsc(v)+' ('+x.n+')</span>').join('')+'</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span class="small muted">Unir como</span><input id="ed-sug-'+i+'" value="'+edEsc(g.target)+'" style="flex:1;min-width:180px;max-width:420px;border:1px solid var(--line2);border-radius:8px;padding:7px 10px;font:14px var(--sans)"><button class="btn sm primary" type="button" onclick="edMerge('+i+')">Unir</button><button class="btn sm" type="button" onclick="edIgnore('+i+')">Não são duplicados</button></div></div>').join('')+(ED_SUG.length>60?'<div class="small muted" style="margin-top:8px">Mostrando os 60 grupos com mais ocorrências.</div>':'');
@@ -998,7 +1038,7 @@ function edEnsureUI(){
     '<div class="grid2"><div class="field"><label>Valor atual</label><input id="ed-from" list="ed-datalist" placeholder="ex.: Brazil"><datalist id="ed-datalist"></datalist></div><div class="field"><label>Trocar por</label><input id="ed-to" placeholder="ex.: Brasil"></div></div>'+
     '<div class="actions"><button class="btn primary" type="button" onclick="edSetRule(false)">Aplicar e atualizar tudo agora</button><button class="btn" type="button" onclick="edSetRule(true)">Excluir este valor das análises</button></div>'+
     '<div class="small muted" style="margin-top:8px">Ex.: Brazil → Brasil; duas grafias do mesmo autor → um único nome; abreviação de periódico → nome completo; palavra-chave genérica → excluir.</div>'+
-    '<div style="margin-top:18px"><b class="small">Possíveis duplicados neste campo <span id="ed-suggest-n"></span></b><div class="small muted" style="margin:2px 0 6px">Grafias diferentes que parecem ser o mesmo nome ou termo. Confira, ajuste o nome final e clique em Unir.</div><div id="ed-suggest" class="tscroll" style="max-height:420px"></div></div>'+
+    '<div style="margin-top:18px"><b class="small">Possíveis duplicados neste campo <span id="ed-suggest-n"></span></b><div class="small muted" style="margin:2px 0 6px">Grafias diferentes que parecem ser o mesmo nome ou termo. Confira, ajuste o nome final e clique em Unir.</div><button class="btn sm" type="button" id="ed-bulk" onclick="edBulkMerge()" style="margin-bottom:8px">Unir grafias equivalentes</button><div id="ed-suggest" class="tscroll" style="max-height:420px"></div></div>'+
     '<div class="grid2" style="margin-top:16px;align-items:start"><div><b class="small">Valores encontrados</b><div class="tscroll" style="max-height:380px;margin-top:6px"><table class="t" id="ed-values-table"></table></div></div><div><b class="small">Correções ativas</b><div id="ed-rules" style="margin-top:6px"></div></div></div>';
     const cards=host.querySelectorAll(':scope > .card');if(cards.length>1)host.insertBefore(card,cards[1]);else host.appendChild(card);
   }
@@ -1034,7 +1074,7 @@ function edInstall(){
   if(typeof slimResults==='function'){const rawSlim=slimResults;slimResults=edFirestoreSafeSlim(rawSlim);}
   setTimeout(edRenderUI,0);
 }
-window.edMerge=edMerge;window.edIgnore=edIgnore;window.edSetRule=edSetRule;window.edRemoveRule=edRemoveRule;window.edClearRules=edClearRules;window.edPick=edPick;window.edRenderValues=edRenderValues;window.edFieldChanged=edFieldChanged;window.edGoEditor=edGoEditor;
+window.edBulkMerge=edBulkMerge;window.edMerge=edMerge;window.edIgnore=edIgnore;window.edSetRule=edSetRule;window.edRemoveRule=edRemoveRule;window.edClearRules=edClearRules;window.edPick=edPick;window.edRenderValues=edRenderValues;window.edFieldChanged=edFieldChanged;window.edGoEditor=edGoEditor;
 setTimeout(edInstall,0);
 
 /* Reparo complementar do editor: preserva/recupera enriquecimento SciELO após recarga do CSV bruto. */
@@ -1044,13 +1084,9 @@ setTimeout(edInstall,0);
 
   function fixNorm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();}
   function fixIsSciELO(){
-    const vals=[
-      (typeof CORPUS!=='undefined'&&CORPUS?.format)||'',
-      (typeof RESULTS!=='undefined'&&RESULTS?.format)||'',
-      (typeof PROJ!=='undefined'&&PROJ?.file?.format)||'',
-      (typeof PROJ!=='undefined'&&PROJ?.base)||''
-    ].map(fixNorm);
-    return vals.some(v=>v.includes('scielo'));
+    if(typeof CORPUS!=='undefined'&&CORPUS&&CORPUS.format) return fixNorm(CORPUS.format)==='scielo';
+    const ff=fixNorm((typeof PROJ!=='undefined'&&PROJ?.file?.format)||''); if(ff) return ff==='scielo';
+    return [(typeof RESULTS!=='undefined'&&RESULTS?.format)||'',(typeof PROJ!=='undefined'&&PROJ?.base)||''].map(fixNorm).some(v=>v==='scielo');
   }
 
   async function fixRebuildSciELO(force=false){
@@ -1387,7 +1423,7 @@ function dedupeRecords(records){
     if(doi) keys.push('d:' + doi);
     if(t.length >= 12) keys.push('t:' + t + '|' + (r.year || ''));
     const hit = keys.map(k => seen.get(k)).find(Boolean);
-    if(hit){ removed++; if(list.length < 500) list.push({title: r.title, year: r.year, doi: r.doi, by: doi && seen.get('d:' + doi) ? 'DOI' : 'título e ano'}); if((r.citations || 0) > (hit.citations || 0)) hit.citations = r.citations; keys.forEach(k => seen.set(k, hit)); continue; }
+    if(hit){ removed++; if(list.length < 500) list.push({title: r.title, year: r.year, doi: r.doi, by: doi && seen.get('d:' + doi) ? 'DOI' : 'título e ano'}); mergeDup(hit, r); keys.forEach(k => seen.set(k, hit)); continue; }
     keys.forEach(k => seen.set(k, r)); out.push(r);
   }
   return {records: out, removed, list};
@@ -1421,6 +1457,7 @@ function buildCorpus(rows){
     o.funding = extractFunding(r);
     return o;
   }).filter(o => o.title || o.authors.length);
+  records.forEach(r => { r.sources = [format]; });
   const dd = dedupeRecords(records);
   return {format, records: dd.records, columns: cols, duplicates: dd.removed, duplicateList: dd.list};
 }
@@ -1464,7 +1501,122 @@ function extractInstitutions(affil, addresses){
   });
   return [...set];
 }
+/* ---------- projeto integrado: várias bases no mesmo corpus ---------- */
+function mergeDup(a, b){   // completa o registro mantido com o que falta, a partir do duplicado
+  const S = new Set([...(a.sources || []), ...(b.sources || [])]); if(S.size) a.sources = [...S];
+  ['authors','keywords','kwplus','area','countries','institutions','funding'].forEach(k => { if(!(a[k] || []).length && (b[k] || []).length) a[k] = b[k]; });
+  ['journal','doi','doctype','lang','title'].forEach(k => { if(!a[k] && b[k]) a[k] = b[k]; });
+  if(!a.year && b.year) a.year = b.year;
+  if((b.citations || 0) > (a.citations || 0)) a.citations = b.citations;
+}
+function basesSummary(records){
+  const m = new Map(); let multi = 0;
+  records.forEach(r => { const s = r.sources && r.sources.length ? r.sources : ['Base não identificada']; if(s.length > 1) multi++;
+    s.forEach(b => { let o = m.get(b); if(!o){ o = {name: b, total: 0, exclusive: 0}; m.set(b, o); } o.total++; if(s.length === 1) o.exclusive++; }); });
+  return {bases: [...m.values()].sort((a,b) => b.total - a.total), multi, total: records.length};
+}
+function mergeCorpora(prev, baseRecs, add){
+  const dd = dedupeRecords([...baseRecs, ...add.records]);
+  const names = [...new Set(dd.records.flatMap(r => r.sources || []))];
+  return {format: names.length > 1 ? 'Integrado (' + names.join(' + ') + ')' : (names[0] || prev.format), records: dd.records, columns: [...new Set([...(prev.columns || []), ...(add.columns || [])])],
+    duplicates: (prev.duplicates || 0) + (add.duplicates || 0) + dd.removed, duplicateList: [...(prev.duplicateList || []), ...(add.duplicateList || []), ...dd.list].slice(0, 500), enrichment: prev.enrichment, integrated: true};
+}
+async function readExtraCorpus(file, say){
+  const rows = await readRows(file); if(!rows.length) throw new Error('o arquivo não tem linhas de dados');
+  const c = buildCorpus(rows); if(!c.records.length) throw new Error('nenhum registro reconhecido');
+  if(c.format === 'SciELO' && typeof enrichSciELOCorpus === 'function'){ try{ await enrichSciELOCorpus(c, (d, t) => say('Enriquecendo SciELO: ' + d + '/' + t)); }catch(e){ console.warn('SciELO (base adicional):', e); } }
+  return c;
+}
+function rawRecordsNow(){ return (typeof ED_BASE !== 'undefined' && ED_BASE && ED_BASE.length) ? edClone(ED_BASE) : CORPUS.records; }
+async function handleAddFile(file){
+  if(!PROJ){ setMsg('data-msg', 'Abra ou crie um projeto antes de importar.', 'warn'); return; }
+  if(!CORPUS){ setMsg('data-msg', 'Importe primeiro o arquivo principal do projeto. Depois adicione as outras bases.', 'warn'); return; }
+  const say = m => setMsg('data-msg', '<span class="spinner"></span>' + esc(m), 'info');
+  say('Lendo a base adicional');
+  const prev = CORPUS, baseRecs = rawRecordsNow(), before = baseRecs.length;
+  let add;
+  try{ add = await readExtraCorpus(file, say); }
+  catch(e){ console.error(e); setMsg('data-msg', 'Não foi possível ler a base adicional: ' + esc(e.message), 'err'); return; }
+  const read = add.records.length, fmtName = add.format;
+  CORPUS = mergeCorpora(prev, baseRecs, add);
+  const gained = CORPUS.records.length - before;
+  renderProjectLine(); renderCorpusUI(); computeAll(); renderAll();
+  Promise.resolve(saveResults()).catch(e => console.warn('Falha ao salvar resultados:', e));
+  let path = null, note = '';
+  try{
+    const p = 'users/' + USER.uid + '/projects/' + PROJ.id + '/extra/' + Date.now() + '-' + file.name;
+    await Promise.race([storage.ref(p).put(file, {contentType: file.type || 'application/octet-stream'}), new Promise((_, rej) => setTimeout(() => rej(new Error('o Storage demorou mais de 12 segundos')), 12000))]);
+    path = p;
+  }catch(e){ console.warn('Base adicional não guardada:', e); note = ' O arquivo não foi guardado na nuvem (' + esc(e.message || e) + '): ao reabrir o projeto, adicione esta base de novo para recalcular.'; }
+  try{ await updateProj({extraFiles: [...(PROJ.extraFiles || []), {name: file.name, path, format: fmtName, records: read, addedAt: new Date().toISOString()}]}); }
+  catch(e){ console.warn('Lista de bases não salva:', e); note += ' A lista de bases não pôde ser salva no projeto.'; }
+  setMsg('data-msg', `${esc(fmtName)}: ${fmt(read)} registros lidos, ${fmt(gained)} novos e ${fmt(read - gained)} já presentes em outra base. O corpus integrado tem ${fmt(CORPUS.records.length)} documentos.` + note, note ? 'warn' : 'ok');
+  renderCorpusUI();
+}
+async function loadExtraBases(){
+  const ex = (typeof PROJ !== 'undefined' && PROJ && PROJ.extraFiles) || []; if(!CORPUS || !ex.length) return;
+  const failed = []; let merged = 0;
+  const say = m => setMsg('data-msg', '<span class="spinner"></span>' + esc(m), 'info');
+  for(const f of ex){
+    if(!f.path){ failed.push(f.name); continue; }
+    try{
+      say('Baixando a base adicional ' + f.name);
+      const url = await storage.ref(f.path).getDownloadURL(), blob = await (await fetch(url)).blob();
+      const prev = CORPUS, baseRecs = rawRecordsNow();
+      const add = await readExtraCorpus(new File([blob], f.name, {type: blob.type}), say);
+      CORPUS = mergeCorpora(prev, baseRecs, add); merged++;
+    }catch(e){ console.warn('Base adicional não carregada:', f.name, e); failed.push(f.name); }
+  }
+  if(merged){ renderCorpusUI(); computeAll(); renderAll(); Promise.resolve(saveResults()).catch(e => console.warn(e)); }
+  setMsg('data-msg', (merged ? `Corpus integrado recarregado com ${fmt(CORPUS.records.length)} documentos. ` : '') + (failed.length ? 'Não foi possível carregar: ' + esc(failed.join(', ')) + '. Adicione de novo essas bases para incluí-las.' : ''), failed.length ? 'warn' : 'ok');
+}
+async function removeExtraBase(i){
+  const ex = [...((PROJ && PROJ.extraFiles) || [])], f = ex[i]; if(!f) return;
+  if(!confirm('Retirar a base "' + f.name + '" deste projeto? O corpus será refeito sem ela.')) return;
+  ex.splice(i, 1);
+  try{ if(f.path) await storage.ref(f.path).delete().catch(() => {}); await updateProj({extraFiles: ex}); }
+  catch(e){ toast('Não foi possível retirar a base: ' + e.message); return; }
+  if(PROJ.file && PROJ.file.path){ CORPUS = null; await reloadRaw(); }
+  else { renderCorpusUI(); setMsg('data-msg', 'Base retirada da lista. Importe de novo o arquivo principal para refazer o corpus sem ela.', 'warn'); }
+}
+function renderBases(){
+  const card = document.getElementById('bases-card'), row = document.getElementById('add-base-row');
+  if(row) row.classList.toggle('hidden', !CORPUS);
+  if(!card) return;
+  const ex = (typeof PROJ !== 'undefined' && PROJ && PROJ.extraFiles) || [];
+  const S = CORPUS ? basesSummary(CORPUS.records) : null;
+  if(!S || (S.bases.length < 2 && !ex.length)){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  kpis('k-bases', [[fmt(S.total), 'documentos únicos'], [fmt(S.bases.length), 'bases'], [fmt(S.multi), 'documentos em duas ou mais bases'], [S.total ? fmt1(S.multi/S.total*100) + '%' : '–', 'sobreposição']]);
+  table('t-bases', ['Base', {t: 'Documentos', n: 1}, {t: 'Só nesta base', n: 1}, {t: 'Também em outra base', n: 1}], S.bases.map(b => [esc(b.name), fmt(b.total), fmt(b.exclusive), fmt(b.total - b.exclusive)]));
+  document.getElementById('bases-files').innerHTML = ex.length ? '<b class="small">Arquivos adicionados</b>' + ex.map((f, i) => `<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid #edf0f3"><span class="small">${esc(f.name)} · ${esc(f.format || '')} · ${fmt(f.records || 0)} registros${f.path ? '' : ' · <span style="color:#b26a00">não guardado na nuvem</span>'}</span><button class="btn sm" type="button" onclick="removeExtraBase(${i})">Retirar</button></div>`).join('') : '';
+}
+function renderBasesChart(){
+  const card = document.getElementById('bases-an'); if(!card || !RESULTS) return;
+  const S = RESULTS.bases;
+  if(!S || !S.bases || S.bases.length < 2){ card.classList.add('hidden'); if(CHARTS['ch-bases']){ CHARTS['ch-bases'].destroy(); delete CHARTS['ch-bases']; } return; }
+  card.classList.remove('hidden');
+  document.getElementById('ch-bases').parentNode.style.height = Math.max(200, S.bases.length*46 + 110) + 'px';
+  mkChart('ch-bases', 'bar', {labels: S.bases.map(b => b.name), datasets: [{label: 'Só nesta base', figKey: 'excl', data: S.bases.map(b => b.exclusive), backgroundColor: PAL[0], borderRadius: 2}, {label: 'Também em outra base', figKey: 'shared', data: S.bases.map(b => b.total - b.exclusive), backgroundColor: PAL[1], borderRadius: 2}]},
+    {indexAxis: 'y', plugins: {legend: {display: true, position: 'bottom'}}, scales: {x: Object.assign({stacked: true, beginAtZero: true, title: {display: true, text: 'Documentos'}}, AX), y: Object.assign({stacked: true}, AX, {grid: {display: false}})}});
+  document.getElementById('i-bases').innerHTML = `O corpus integrado reúne <b>${fmt(S.total)} documentos únicos</b> de ${fmt(S.bases.length)} bases. ${fmt(S.multi)} documentos (${fmt1(S.total ? S.multi/S.total*100 : 0)}%) apareceram em duas ou mais bases e foram contados uma única vez. ` + S.bases.map(b => `${esc(b.name)} contribuiu com ${fmt(b.total)} documentos, dos quais ${fmt(b.exclusive)} só existem nela`).join('; ') + '.';
+}
+(function integInstall(){
+  if(typeof reloadRaw !== 'function' || typeof handleFile !== 'function' || !reloadRaw.__scieloFixed) return setTimeout(integInstall, 120);
+  if(reloadRaw.__integ) return;
+  const rawReload = reloadRaw;
+  reloadRaw = async function(){ await rawReload(); try{ await loadExtraBases(); }catch(e){ console.warn('Bases adicionais:', e); } };
+  reloadRaw.__scieloFixed = true; reloadRaw.__integ = true;
+  const rawHandle = handleFile;
+  handleFile = async function(file){
+    const had = !!(PROJ && (PROJ.extraFiles || []).length);
+    await rawHandle(file);
+    if(had && CORPUS){ try{ await updateProj({extraFiles: []}); }catch(e){ console.warn(e); } renderCorpusUI(); toast('Arquivo principal trocado. Adicione de novo as outras bases.'); }
+  };
+})();
+
 function renderCorpusUI(){
+  try{ renderBases(); }catch(e){ console.warn('Bases:', e); }
   const has = !!CORPUS;
   $('#data-summary').classList.toggle('hidden', !has);
   $('#data-empty').classList.toggle('hidden', has || !!PROJ?.file);
@@ -1564,7 +1716,7 @@ function computeAll(){
   RESULTS = {
     version: APP_VERSION, computedAt: new Date().toISOString(), format: CORPUS.format,
     summary: {documents: N, yearMin: y0, yearMax: y1, authors: A, journals: journals.length, keywords: keywords.length, countries: countries.length, institutions: institutions.length, totalCitations: totalCit, citPerDoc: N ? totalCit/N : 0, collabIndex: collab, singleAuthored: single, growth, doubling, scp, mcp, withCountry: withC.length, docsPerAuthor: A ? N/A : 0},
-    temporal: perYear, authors: authors.slice(0, 100), journals: journals.slice(0, 100), keywords: keywords.slice(0, 150), kwplus: kwplus.slice(0, 100), areas: areas.slice(0, 60), countries: countries.slice(0, 120), institutions: institutions.slice(0, 100), doctypes: doctypes.slice(0, 20), langs: langs.slice(0, 20), cited, lotka, bradford, zipf, nets, evolution: computeEvolution(R)
+    temporal: perYear, authors: authors.slice(0, 100), journals: journals.slice(0, 100), keywords: keywords.slice(0, 150), kwplus: kwplus.slice(0, 100), areas: areas.slice(0, 60), countries: countries.slice(0, 120), institutions: institutions.slice(0, 100), doctypes: doctypes.slice(0, 20), langs: langs.slice(0, 20), cited, lotka, bradford, zipf, nets, evolution: computeEvolution(R), bases: basesSummary(R)
   };
 }
 function buildNet(lists, maxNodes){
@@ -2046,6 +2198,12 @@ function helpContent(key){
       c: 'Os limites de 50% do pico e de 5% ao ano são critérios desta Sala, escolhidos por serem simples e transparentes. Descreva-os no método se usar o resultado. Séries curtas ou com poucos documentos por ano dão ajustes instáveis. Um R² alto descreve o passado e não garante o futuro. O ano corrente é excluído por estar incompleto.'};
     if(!X || !X.ok) return Object.assign(base, {p: 'O corpus não tem anos completos suficientes para ajustar os modelos de tendência (mínimo de 5).'});
     return Object.assign(base, {p: `A produção anual de ${X.y0} a ${X.y1} foi ajustada por mínimos quadrados a quatro modelos: linear, exponencial, logarítmico e polinomial de segundo grau. ${X.sel === X.best ? 'O melhor ajuste, pelo R² ajustado, foi o modelo' : 'Para a interpretação foi adotado o modelo'} ${X.sel.label.toLowerCase()} (R² = ${fmt2(X.sel.r2)}; R² ajustado = ${fmt2(X.sel.adj)}; p ${fmtP(X.sel.pval).startsWith('<') ? fmtP(X.sel.pval) : '= ' + fmtP(X.sel.pval)}, teste F da regressão)` + (X.sel.r2 < .5 ? '. O ajuste foi fraco, o que indica produção oscilante, sem tendência definida' : `, o que indica ${X.shape}`) + `. O pico de produção ocorreu em ${X.peakYear}, com ${fmt(X.peak)} documentos. Considerando os anos consecutivos com pelo menos 50% da produção do pico, o tema ` + (X.stillHot ? `está em alta desde ${X.hotFrom}` : `esteve em alta ${X.hotFrom === X.hotTo ? 'em ' + X.hotFrom : 'de ' + X.hotFrom + ' a ' + X.hotTo}`) + `. Nos últimos ${X.recentWindow} anos completos, a variação média foi de ${X.recentSlope >= 0 ? '+' : '-'}${fmt1(Math.abs(X.recentSlope))} documentos por ano, o que caracteriza ${X.recent === 'up' ? 'ascensão' : X.recent === 'down' ? 'declínio' : 'estabilidade'}.`}); }
+  if(key === 'bases'){ const B = R.bases;
+    const base = {t: 'Bases de dados do corpus', o: 'Mostra quantos documentos do corpus integrado vieram de cada base e quantos aparecem em mais de uma.',
+      l: 'A parte "Só nesta base" são documentos que nenhuma outra base trouxe: é o ganho real de incluir aquela base. A parte "Também em outra base" é a sobreposição. Documentos repetidos são identificados pelo mesmo DOI ou, na falta dele, pelo mesmo título e ano, e contam uma única vez em todas as análises. Quando o mesmo documento vem de duas bases, a Sala mantém um registro e completa os campos vazios com os dados da outra.',
+      c: 'As bases descrevem os mesmos autores, periódicos e países com grafias diferentes. Antes de interpretar rankings e redes de um corpus integrado, use Editar nomes e termos e o botão Unir grafias equivalentes. As citações vêm de bases diferentes e não são diretamente comparáveis: a Sala guarda o maior valor. Palavras-chave e afiliações não existem em todas as bases, então a cobertura desses campos é parcial. Documentos sem DOI e com títulos escritos de forma diferente podem escapar da deduplicação.'};
+    if(!B || B.bases.length < 2) return Object.assign(base, {p: 'O corpus atual vem de uma única base.'});
+    return Object.assign(base, {p: `O corpus integrou ${fmt(B.bases.length)} bases de dados (${B.bases.map(b => b.name).join(', ')}). Os registros duplicados entre bases foram identificados pelo DOI ou, na ausência dele, pelo título e ano, e unidos em um único registro. O corpus final reuniu ${fmt(B.total)} documentos únicos, dos quais ${fmt(B.multi)} (${fmt1(B.total ? B.multi/B.total*100 : 0)}%) estavam presentes em duas ou mais bases. ` + B.bases.map(b => `${b.name} contribuiu com ${fmt(b.total)} documentos, sendo ${fmt(b.exclusive)} exclusivos`).join('; ') + '.'}); }
   if(key === 'evo'){ const X = EVO_CUR, nm = X ? EVO_FIELDS[X.field].toLowerCase() : 'itens';
     const base = {t: 'Evolução no tempo', o: 'Para cada item (palavra-chave, autor, periódico, país, instituição ou agência de fomento), mostra em que anos ele aparece nos documentos do corpus.',
       l: 'Linha fina: do primeiro ao último ano em que o item aparece. Barra grossa: os anos que concentram a metade central das ocorrências (do 1º ao 3º quartil). Ponto: ano mediano, com tamanho proporcional ao número de ocorrências. Itens no alto com linhas curtas à direita são recentes: indicam assuntos, autores ou países que estão entrando no tema. Linhas que terminam cedo indicam quem deixou de aparecer. Linhas longas indicam presença duradoura.',
@@ -2119,7 +2277,7 @@ function helpButtons(){
     b.addEventListener('click', ev => { ev.stopPropagation(); helpOpen(key); });
     h3.appendChild(b);
   };
-  const byCanvas = {'ch-temporal': 'temporal', 'ch-trend': 'trend', 'ch-evo': 'evo', 'ch-autores': 'autores', 'ch-journals': 'journals', 'ch-paises': 'paises', 'ch-kw': 'kw', 'ch-areas': 'areas', 'ch-lotka': 'lotka', 'ch-bradford': 'bradford', 'ch-zipf': 'zipf'};
+  const byCanvas = {'ch-temporal': 'temporal', 'ch-trend': 'trend', 'ch-evo': 'evo', 'ch-bases': 'bases', 'ch-autores': 'autores', 'ch-journals': 'journals', 'ch-paises': 'paises', 'ch-kw': 'kw', 'ch-areas': 'areas', 'ch-lotka': 'lotka', 'ch-bradford': 'bradford', 'ch-zipf': 'zipf'};
   Object.entries(byCanvas).forEach(([id, key]) => add(document.getElementById(id)?.closest('.card')?.querySelector('.charthead h3'), key));
   add(document.getElementById('k-geral')?.closest('.card')?.querySelector('h3'), 'geral');
   add(document.querySelector('#net-body .card > h3'), 'net');
@@ -2130,7 +2288,7 @@ function renderAll(){
   if(!RESULTS) return clearAnalysisUI();
   ['leis','an','net'].forEach(p => { document.getElementById(p + '-empty').classList.add('hidden'); document.getElementById(p + '-body').classList.remove('hidden'); });
   const S = RESULTS.summary;
-  kpis('k-geral', [[fmt(S.documents),'documentos'],[S.yearMin == null ? 'sem ano' : `${S.yearMin}–${S.yearMax}`,'período'],[fmt(S.authors),'autores'],[fmt(S.journals),'periódicos'],[fmt(S.countries),'países'],[fmt(S.totalCitations),'citações'],[fmt1(S.citPerDoc),'citações por documento'],[fmt2(S.collabIndex),'autores por documento'],[S.growth == null ? '–' : fmt1(S.growth) + '%','crescimento anual'],[S.doubling == null ? '–' : fmt1(S.doubling) + ' anos','tempo de duplicação']]);
+  kpis('k-geral', [[fmt(S.documents),'documentos'],...(RESULTS.bases && RESULTS.bases.bases.length > 1 ? [[fmt(RESULTS.bases.bases.length),'bases integradas']] : []),[S.yearMin == null ? 'sem ano' : `${S.yearMin}–${S.yearMax}`,'período'],[fmt(S.authors),'autores'],[fmt(S.journals),'periódicos'],[fmt(S.countries),'países'],[fmt(S.totalCitations),'citações'],[fmt1(S.citPerDoc),'citações por documento'],[fmt2(S.collabIndex),'autores por documento'],[S.growth == null ? '–' : fmt1(S.growth) + '%','crescimento anual'],[S.doubling == null ? '–' : fmt1(S.doubling) + ' anos','tempo de duplicação']]);
 
   /* temporal */
   const T = RESULTS.temporal; let cumT = 0; const cumArr = T.map(([,c]) => (cumT += c));
@@ -2139,6 +2297,7 @@ function renderAll(){
   const peak = [...T].sort((a,b) => b[1]-a[1])[0] || null;
   $('#i-temporal').innerHTML = `Produção de <b>${fmt(S.documents)} documentos</b>` + (peak ? ` entre ${S.yearMin} e ${S.yearMax}, com pico de ${fmt(peak[1])} em ${peak[0]}. ` : ', sem ano de publicação identificado. ') + (S.growth == null ? 'Série curta demais para estimar taxa de crescimento.' : `Taxa composta de crescimento anual de <b>${fmt1(S.growth)}%</b> entre o primeiro e o último ano completo` + (S.doubling ? `, o que corresponde a um tempo de duplicação de ${fmt1(S.doubling)} anos.` : '.'));
 
+  try{ renderBasesChart(); }catch(e){ console.warn('Bases:', e); }
   try{ renderTrend(); }catch(e){ console.warn('Tendência do tema:', e); }
   try{ renderEvolution(); }catch(e){ console.warn('Evolução no tempo:', e); }
   try{ renderLinks(); }catch(e){ console.warn('Links:', e); }
