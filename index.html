@@ -211,6 +211,12 @@ table.t th.n{text-align:right}
   .netbox{height:420px}
 }
 @media print{aside,.actions,.topbar .actions{display:none}}
+.helpq{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-left:8px;border-radius:50%;border:0;background:#E69F00;color:#1a2332;font:700 13.5px var(--sans);cursor:pointer;vertical-align:middle;box-shadow:0 0 0 3px rgba(230,159,0,.22);transition:transform .12s,box-shadow .12s}
+.helpq:hover,.helpq:focus-visible{transform:scale(1.15);box-shadow:0 0 0 5px rgba(230,159,0,.3);outline:none}
+.fig-panel.help{width:430px}
+.help-txt{font-size:13.5px;line-height:1.55}
+.help-paste{font-size:13.5px;line-height:1.6;background:var(--soft,#f6f8fa);border:1px solid var(--line,#e3e8ee);border-left:3px solid #E69F00;border-radius:8px;padding:10px 12px;user-select:all}
+@media print{.helpq{display:none}}
 </style>
 </head>
 <body>
@@ -423,6 +429,13 @@ table.t th.n{text-align:right}
           <div class="chartbox"><canvas id="ch-temporal"></canvas></div>
           <div class="interp" id="i-temporal"></div>
         </div>
+        <div class="card">
+          <div class="charthead"><h3>Tendência do tema</h3><button class="btn sm" onclick="dlChart('ch-trend','tendencia')">Baixar PNG</button></div>
+          <div class="kpis" id="k-trend"></div>
+          <div class="chartbox" style="margin-top:12px"><canvas id="ch-trend"></canvas></div>
+          <div class="tscroll" style="margin-top:12px"><table class="t" id="t-trend"></table></div>
+          <div class="interp" id="i-trend"></div>
+        </div>
         <div class="grid2">
           <div class="card"><div class="charthead"><h3>Autores mais produtivos</h3><button class="btn sm" onclick="dlChart('ch-autores','autores')">PNG</button></div><div class="chartbox tall"><canvas id="ch-autores"></canvas></div></div>
           <div class="card"><div class="charthead"><h3>Periódicos com mais artigos</h3><button class="btn sm" onclick="dlChart('ch-journals','periodicos')">PNG</button></div><div class="chartbox tall"><canvas id="ch-journals"></canvas></div></div>
@@ -565,7 +578,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.3.0";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -1399,7 +1412,16 @@ function normCountry(c){
   const up = c.toUpperCase();
   if(COUNTRY_FIX[up]) return COUNTRY_FIX[up];
   if(/\d/.test(c) || c.length > 32 || c.length < 3) return '';
-  return c.split(' ').map(w => w.length > 2 ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w.toUpperCase()).join(' ').replace(/\bOf\b/g, 'of').replace(/\bAnd\b/g, 'and');
+  const out = c.split(' ').map(w => w.length > 2 ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w.toUpperCase()).join(' ').replace(/\bOf\b/g, 'of').replace(/\bAnd\b/g, 'and');
+  return isKnownCountry(out) ? out : '';
+}
+const SMALL_COUNTRIES = new Set('singapore|hong kong|macau|macao|taiwan|malta|bahrain|mauritius|liechtenstein|monaco|andorra|san marino|vatican|barbados|maldives|seychelles|cape verde|cabo verde|comoros|sao tome and principe|grenada|saint lucia|dominica|antigua and barbuda|saint kitts and nevis|saint vincent and the grenadines|tonga|samoa|kiribati|tuvalu|nauru|palau|micronesia|marshall islands|palestine|kosovo|puerto rico|guadeloupe|martinique|french guiana|reunion|new caledonia|french polynesia|greenland|bermuda|curacao|aruba|guam|brunei|timor-leste|east timor|bahamas|iran|vietnam|turkey|czech republic|russian federation|republic of korea|north korea|laos|syria|moldova|tanzania|bolivia|venezuela|ivory coast|cote divoire|eswatini|north macedonia|serbia|montenegro|south sudan'.split('|'));
+function isKnownCountry(name){
+  try{
+    if(typeof resolveGeo !== 'function') return true;
+    if(resolveGeo(name, 'world')) return true;
+    return SMALL_COUNTRIES.has(String(name).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.']/g, '').trim());
+  }catch(e){ return true; }
 }
 function extractCountries(affil, addresses){
   const src = addresses || affil; if(!src) return [];
@@ -1790,6 +1812,162 @@ function table(id, head, rows){ document.getElementById(id).innerHTML = '<thead>
 function clearAnalysisUI(){
   ['leis','an','net'].forEach(p => { document.getElementById(p + '-empty').classList.remove('hidden'); document.getElementById(p + '-body').classList.add('hidden'); });
 }
+/* ---------- tendência do tema: modelos de ajuste, R² e período de alta ---------- */
+let TREND_CUR = null;
+function trendSolve(A, b){
+  const n = b.length, M = A.map((r,i) => [...r, b[i]]);
+  for(let c = 0; c < n; c++){
+    let p = c; for(let r = c+1; r < n; r++) if(Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    if(Math.abs(M[p][c]) < 1e-12) return null;
+    [M[c], M[p]] = [M[p], M[c]];
+    for(let r = 0; r < n; r++){ if(r === c) continue; const f = M[r][c]/M[c][c]; for(let k = c; k <= n; k++) M[r][k] -= f*M[c][k]; }
+  }
+  return M.map((r,i) => r[n]/r[i]);
+}
+function trendCompute(temporal){
+  const nowY = new Date().getFullYear();
+  const T = (temporal || []).filter(([y]) => y < nowY);
+  const dropped = (temporal || []).length - T.length;
+  if(T.length < 5) return {ok: false, n: T.length, dropped};
+  const n = T.length, y0 = T[0][0], t = T.map((_,i) => i+1), y = T.map(p => p[1]);
+  const my = y.reduce((a,b) => a+b, 0)/n, sst = y.reduce((s,v) => s + (v-my)**2, 0);
+  const score = (f, k) => { const sse = y.reduce((s,v,i) => s + (v - f(t[i]))**2, 0), r2 = sst > 0 ? 1 - sse/sst : 0; return {r2, adj: n-k-1 > 0 ? 1 - (1-r2)*(n-1)/(n-k-1) : r2}; };
+  const sg = v => (v < 0 ? '- ' : '+ ') + fmt2(Math.abs(v));
+  const models = [];
+  { const m = ols(t, y), f = x => m.a + m.b*x; models.push(Object.assign({key: 'linear', label: 'Linear', eq: `y = ${fmt2(m.a)} ${sg(m.b)}·t`, f, k: 1, p: m}, score(f, 1))); }
+  { const pos = t.map((x,i) => [x, y[i]]).filter(p => p[1] > 0);
+    if(pos.length >= 4){ const m = ols(pos.map(p => p[0]), pos.map(p => Math.log(p[1]))), A = Math.exp(m.a), f = x => A*Math.exp(m.b*x); models.push(Object.assign({key: 'exp', label: 'Exponencial', eq: `y = ${fmt2(A)}·e^(${fmt2(m.b).replace('-', '-')}·t)`, f, k: 1, p: {a: A, b: m.b}}, score(f, 1))); } }
+  { const m = ols(t.map(x => Math.log(x)), y), f = x => m.a + m.b*Math.log(x); models.push(Object.assign({key: 'log', label: 'Logarítmico', eq: `y = ${fmt2(m.a)} ${sg(m.b)}·ln(t)`, f, k: 1, p: m}, score(f, 1))); }
+  { const S = k => t.reduce((s,x) => s + x**k, 0), Sy = k => t.reduce((s,x,i) => s + x**k*y[i], 0);
+    const c = trendSolve([[n, S(1), S(2)], [S(1), S(2), S(3)], [S(2), S(3), S(4)]], [Sy(0), Sy(1), Sy(2)]);
+    if(c){ const f = x => c[0] + c[1]*x + c[2]*x*x; models.push(Object.assign({key: 'poly', label: 'Polinomial (2º grau)', eq: `y = ${fmt2(c[0])} ${sg(c[1])}·t ${sg(c[2])}·t²`, f, k: 2, p: {c}}, score(f, 2))); } }
+  const best = [...models].sort((a,b) => b.adj - a.adj)[0];
+  // pico e período de alta (anos consecutivos, em torno do pico, com pelo menos 50% do pico)
+  let ip = 0; y.forEach((v,i) => { if(v >= y[ip]) ip = i; });
+  const peak = y[ip], thr = peak*.5; let ia = ip, ib = ip;
+  while(ia > 0 && y[ia-1] >= thr) ia--; while(ib < n-1 && y[ib+1] >= thr) ib++;
+  // tendência recente: regressão linear dos últimos 5 anos completos
+  const w = Math.min(5, n), ry = y.slice(n-w), rm = ry.reduce((a,b) => a+b, 0)/w, rs = ols(ry.map((_,i) => i+1), ry).b;
+  const rel = rm > 0 ? rs/rm : 0, recent = rel > .05 ? 'up' : rel < -.05 ? 'down' : 'flat';
+  const stillHot = ib === n-1;
+  const status = stillHot ? (recent === 'up' ? 'Tema em alta e em ascensão' : recent === 'flat' ? 'Tema em alta, em platô' : 'Tema em alta, com sinais de desaceleração')
+                          : (recent === 'down' ? 'Tema em declínio' : recent === 'up' ? 'Tema em retomada' : 'Tema estabilizado abaixo do pico');
+  let shape = '';
+  if(best.key === 'linear') shape = best.p.b > 0 ? `crescimento aproximadamente constante, de ${fmt1(best.p.b)} documentos a mais por ano` : best.p.b < 0 ? `queda aproximadamente constante, de ${fmt1(Math.abs(best.p.b))} documentos a menos por ano` : 'produção sem variação sistemática';
+  else if(best.key === 'exp') shape = best.p.b > 0 ? `crescimento acelerado, de cerca de ${fmt1((Math.exp(best.p.b)-1)*100)}% ao ano` : `queda proporcional, de cerca de ${fmt1((1-Math.exp(best.p.b))*100)}% ao ano`;
+  else if(best.key === 'log') shape = best.p.b > 0 ? 'crescimento rápido no início e cada vez mais lento, típico de tema que se aproxima da saturação' : 'queda rápida no início e cada vez mais lenta';
+  else { const c = best.p.c, v = c[2] !== 0 ? -c[1]/(2*c[2]) : NaN;
+    if(c[2] < 0 && v > 1 && v < n) shape = `curva com máximo por volta de ${Math.round(y0 + v - 1)}: ascensão seguida de queda`;
+    else if(c[2] < 0) shape = 'crescimento que perde força ao longo do tempo';
+    else if(v > 1 && v < n) shape = `curva com mínimo por volta de ${Math.round(y0 + v - 1)}: queda seguida de retomada`;
+    else shape = 'crescimento que ganha força ao longo do tempo'; }
+  return {ok: true, n, dropped, y0, y1: T[n-1][0], years: T.map(p => p[0]), y, t, models, best, peakYear: T[ip][0], peak, hotFrom: T[ia][0], hotTo: T[ib][0], stillHot, recent, recentSlope: rs, recentWindow: w, status, shape, small: peak < 5};
+}
+function renderTrend(){
+  const box = document.getElementById('ch-trend'); if(!box || !RESULTS) return;
+  const R = TREND_CUR = trendCompute(RESULTS.temporal);
+  if(!R.ok){
+    if(CHARTS['ch-trend']){ CHARTS['ch-trend'].destroy(); delete CHARTS['ch-trend']; }
+    document.getElementById('k-trend').innerHTML = ''; document.getElementById('t-trend').innerHTML = '';
+    document.getElementById('i-trend').innerHTML = `São necessários pelo menos 5 anos completos para ajustar os modelos de tendência. Este corpus tem ${R.n}.`;
+    return;
+  }
+  const hot = R.stillHot ? `desde ${R.hotFrom}` : (R.hotFrom === R.hotTo ? `${R.hotFrom}` : `${R.hotFrom} a ${R.hotTo}`);
+  kpis('k-trend', [[esc(R.status), 'situação do tema'], [esc(R.best.label), 'melhor modelo'], [fmt2(R.best.r2), 'R² do melhor modelo'], [`${R.peakYear} (${fmt(R.peak)})`, 'ano de pico (documentos)'], [hot, 'período de alta']]);
+  const cols = {linear: PAL[1], exp: PAL[5], log: PAL[2], poly: PAL[3]};
+  mkChart('ch-trend', 'bar', {labels: R.years, datasets: [{type: 'bar', label: 'Documentos por ano', data: R.y, backgroundColor: '#c9dcea', borderRadius: 2, order: 10},
+    ...R.models.map(m => ({type: 'line', label: `${m.label} (R² = ${fmt2(m.r2)})`, data: R.t.map(x => Math.max(0, +m.f(x).toFixed(3))), borderColor: cols[m.key], backgroundColor: cols[m.key], pointRadius: 0, tension: .25, borderWidth: m === R.best ? 3.5 : 1.5, borderDash: m === R.best ? [] : [6, 4], order: m === R.best ? 1 : 2}))]},
+    {plugins: {legend: {display: true, position: 'bottom'}}, scales: {x: Object.assign({title: {display: true, text: 'Ano'}}, AX, {grid: {display: false}}), y: Object.assign({beginAtZero: true, min: 0, title: {display: true, text: 'Documentos'}}, AX)}});
+  table('t-trend', ['Modelo', 'Equação (t = 1 em ' + R.y0 + ')', {t: 'R²', n: 1}, {t: 'R² ajustado', n: 1}, ''], [...R.models].sort((a,b) => b.adj - a.adj).map(m => [esc(m.label), esc(m.eq), fmt2(m.r2), fmt2(m.adj), m === R.best ? '<b>melhor ajuste</b>' : '']));
+  const weak = R.best.r2 < .5;
+  document.getElementById('i-trend').innerHTML = `<b>${esc(R.status)}.</b> Entre ${R.y0} e ${R.y1}, o modelo que melhor descreve a produção anual é o <b>${esc(R.best.label.toLowerCase())}</b> (R² = ${fmt2(R.best.r2)})` + (weak ? '. O ajuste é fraco: nenhum modelo descreve bem a série, e a produção oscila sem tendência clara. ' : `, o que indica ${esc(R.shape)}. `) +
+    `O pico foi em ${R.peakYear}, com ${fmt(R.peak)} documentos. Pelo critério de pelo menos metade do pico, o tema ` + (R.stillHot ? `está em alta desde ${R.hotFrom}. ` : `esteve em alta ${R.hotFrom === R.hotTo ? 'em ' + R.hotFrom : 'de ' + R.hotFrom + ' a ' + R.hotTo}. `) +
+    `Nos últimos ${R.recentWindow} anos completos a produção ${R.recent === 'up' ? 'cresceu' : R.recent === 'down' ? 'caiu' : 'ficou estável'} (${R.recentSlope >= 0 ? '+' : '-'}${fmt1(Math.abs(R.recentSlope))} documentos por ano).` +
+    (R.small ? ' Atenção: o pico tem menos de 5 documentos por ano, então qualquer tendência deve ser lida com cautela.' : '') + (R.dropped ? ' O ano corrente foi excluído por estar incompleto.' : '');
+}
+
+/* ---------- explicações (botão ?) com texto pronto para copiar ---------- */
+function helpNetWords(type){
+  return {author: {art: 'um', node: 'autor', nodes: 'autores', title: 'coautoria entre autores', link: 'assinaram juntos pelo menos um documento'},
+          country: {art: 'um', node: 'país', nodes: 'países', title: 'cooperação entre países', link: 'têm pelo menos um documento assinado por autores vinculados a instituições dos dois países'},
+          keyword: {art: 'uma', node: 'palavra-chave', nodes: 'palavras-chave', title: 'coocorrência de palavras-chave', link: 'aparecem juntas em pelo menos um documento'},
+          institution: {art: 'uma', node: 'instituição', nodes: 'instituições', title: 'cooperação entre instituições', link: 'têm pelo menos um documento assinado por autores das duas instituições'}}[type] || {art: 'um', node: 'nó', nodes: 'nós', title: 'cooperação', link: 'aparecem no mesmo documento'};
+}
+function helpContent(key){
+  const R = RESULTS, S = R.summary, top = (a, n) => (a || []).slice(0, n).map(x => `${x[0]} (${fmt(x[1])})`).join(', ');
+  const per = S.yearMin == null ? 'sem ano identificado' : `${S.yearMin} a ${S.yearMax}`;
+  const countryNote = 'O país vem da afiliação institucional dos autores, ou seja, de onde os autores trabalham. Ele não indica onde o estudo foi realizado nem a nacionalidade dos autores. Um estudo sobre o Pantanal feito por autores de instituições holandesas conta para os Países Baixos.';
+  if(key === 'geral') return {t: 'Visão geral', o: 'Resume o tamanho e o perfil do corpus: documentos, período, autores, periódicos, países, citações e ritmo de crescimento.', l: 'Autores por documento mede o tamanho médio das equipes. Citações por documento mede o impacto médio. O crescimento anual é a taxa composta entre o primeiro e o último ano completo, e o tempo de duplicação é quantos anos a produção leva para dobrar nesse ritmo.', c: 'Os números descrevem apenas os documentos recuperados pela sua busca nesta base. Outra base ou outra string de busca daria um corpus diferente. A contagem de autores não desambigua homônimos nem grafias diferentes, a menos que você use o editor de nomes.',
+    p: `O corpus reúne ${fmt(S.documents)} documentos (${per}), assinados por ${fmt(S.authors)} autores e publicados em ${fmt(S.journals)} periódicos. A média foi de ${fmt2(S.collabIndex)} autores por documento e de ${fmt1(S.citPerDoc)} citações por documento.` + (S.growth == null ? '' : ` A taxa composta de crescimento anual foi de ${fmt1(S.growth)}%` + (S.doubling ? `, o que corresponde a um tempo de duplicação de ${fmt1(S.doubling)} anos.` : '.'))};
+  if(key === 'temporal'){ const T = R.temporal || [], pk = [...T].sort((a,b) => b[1]-a[1])[0];
+    return {t: 'Produção anual', o: 'As barras mostram quantos documentos foram publicados em cada ano. A linha mostra o total acumulado desde o primeiro ano.', l: 'Barras cada vez mais altas indicam interesse crescente pelo tema. Uma linha acumulada que fica mais inclinada indica aceleração, e uma linha que se achata indica perda de ritmo.', c: 'O último ano costuma estar incompleto, porque as bases demoram a indexar os documentos mais recentes. Uma queda no último ano raramente é uma queda real.',
+      p: pk ? `A produção sobre o tema somou ${fmt(S.documents)} documentos entre ${S.yearMin} e ${S.yearMax}, com pico em ${pk[0]} (${fmt(pk[1])} documentos).` + (S.growth == null ? '' : ` A taxa composta de crescimento anual foi de ${fmt1(S.growth)}% entre o primeiro e o último ano completo.`) : 'O corpus não tem ano de publicação identificado.'}; }
+  if(key === 'trend'){ const X = TREND_CUR;
+    const base = {t: 'Tendência do tema', o: 'Ajusta quatro modelos à produção anual (linear, exponencial, logarítmico e polinomial de 2º grau) e aponta o que melhor descreve a série. Também identifica o ano de pico, o período em que o tema esteve em alta e o que aconteceu nos últimos anos.',
+      l: 'O R² vai de 0 a 1 e mede quanto da variação anual o modelo explica. O melhor modelo é o de maior R² ajustado, que desconta a vantagem de modelos com mais parâmetros. Linear indica crescimento constante. Exponencial indica crescimento acelerado, típico de tema em expansão. Logarítmico indica crescimento que desacelera, típico de tema perto da saturação. Polinomial com pico indica ascensão seguida de queda. O período de alta reúne os anos seguidos, em torno do pico, com pelo menos metade da produção do pico. A situação do tema combina esse período com a inclinação dos últimos 5 anos completos: acima de +5% ao ano é ascensão, abaixo de -5% é declínio e entre os dois é estabilidade.',
+      c: 'Os limites de 50% do pico e de 5% ao ano são critérios desta Sala, escolhidos por serem simples e transparentes. Descreva-os no método se usar o resultado. Séries curtas ou com poucos documentos por ano dão ajustes instáveis. Um R² alto descreve o passado e não garante o futuro. O ano corrente é excluído por estar incompleto.'};
+    if(!X || !X.ok) return Object.assign(base, {p: 'O corpus não tem anos completos suficientes para ajustar os modelos de tendência (mínimo de 5).'});
+    return Object.assign(base, {p: `A produção anual de ${X.y0} a ${X.y1} foi ajustada por mínimos quadrados a quatro modelos: linear, exponencial, logarítmico e polinomial de segundo grau. O melhor ajuste, pelo R² ajustado, foi o modelo ${X.best.label.toLowerCase()} (R² = ${fmt2(X.best.r2)}; R² ajustado = ${fmt2(X.best.adj)})` + (X.best.r2 < .5 ? '. O ajuste foi fraco, o que indica produção oscilante, sem tendência definida' : `, o que indica ${X.shape}`) + `. O pico de produção ocorreu em ${X.peakYear}, com ${fmt(X.peak)} documentos. Considerando os anos consecutivos com pelo menos 50% da produção do pico, o tema ` + (X.stillHot ? `está em alta desde ${X.hotFrom}` : `esteve em alta ${X.hotFrom === X.hotTo ? 'em ' + X.hotFrom : 'de ' + X.hotFrom + ' a ' + X.hotTo}`) + `. Nos últimos ${X.recentWindow} anos completos, a variação média foi de ${X.recentSlope >= 0 ? '+' : '-'}${fmt1(Math.abs(X.recentSlope))} documentos por ano, o que caracteriza ${X.recent === 'up' ? 'ascensão' : X.recent === 'down' ? 'declínio' : 'estabilidade'}.`}); }
+  if(key === 'autores') return {t: 'Autores mais produtivos', o: 'Ordena os autores pelo número de documentos do corpus em que aparecem.', l: 'Cada documento conta uma vez para cada um dos seus autores (contagem inteira). Um artigo com cinco autores soma um documento para cada um dos cinco.', c: 'A mesma pessoa pode aparecer com grafias diferentes, e pessoas diferentes podem ter o mesmo nome abreviado. Use o botão Corrigir nomes antes de interpretar. Produtividade não é o mesmo que impacto: veja também os documentos mais citados.',
+    p: `Os autores com mais documentos no corpus foram ${top(R.authors, 5)}. A contagem considerou cada documento uma vez para cada autor (contagem inteira).`};
+  if(key === 'journals') return {t: 'Periódicos com mais artigos', o: 'Ordena os periódicos pelo número de documentos do corpus que publicaram.', l: 'Os primeiros periódicos são os principais veículos do tema. Eles indicam onde ler e onde submeter.', c: 'O mesmo periódico pode aparecer com nome completo e abreviado. Use Corrigir nomes para unir. Volume de artigos não mede qualidade do periódico.',
+    p: `Os ${fmt(S.journals)} periódicos do corpus são liderados por ${top(R.journals, 5)}.`};
+  if(key === 'paises') return {t: 'Países', o: 'Mostra quantos documentos têm pelo menos um autor vinculado a uma instituição de cada país.', l: countryNote + ' A contagem é inteira: um documento com autores do Brasil e da Holanda soma um para cada país, então a soma dos países supera o número de documentos. SCP são documentos com autores de um único país. MCP são documentos com autores de dois ou mais países, ou seja, cooperação internacional.', c: 'Só entram os documentos em que a afiliação pôde ser lida. Em bases sem afiliação no arquivo, como a SciELO, a Sala busca a afiliação no OpenAlex e no Crossref, e a cobertura pode ser parcial. Confira na aba Dados quantos documentos têm país identificado.',
+    p: S.withCountry ? `O país foi atribuído pela afiliação institucional dos autores, com contagem inteira. Entre os ${fmt(S.withCountry)} documentos com país identificado, os países com mais documentos foram ${top(R.countries, 5)}. Do total, ${fmt(S.scp)} documentos tiveram autores de um único país e ${fmt(S.mcp)} (${fmt1(S.mcp/S.withCountry*100)}%) envolveram cooperação internacional.` : 'O arquivo não traz afiliações, então não foi possível identificar os países dos autores.'};
+  if(key === 'kw') return {t: 'Palavras-chave dos autores', o: 'Ordena as palavras-chave escolhidas pelos autores pelo número de documentos em que aparecem.', l: 'As palavras mais frequentes mostram os assuntos centrais do tema. As menos frequentes mostram nichos e assuntos emergentes.', c: 'Singular e plural, hífen e sinônimos aparecem como termos diferentes até serem unidos em Corrigir nomes. Os termos usados na busca tendem a liderar a lista, o que é efeito da própria busca.',
+    p: `O corpus tem ${fmt(S.keywords)} palavras-chave distintas. As mais frequentes foram ${top(R.keywords, 8)}.`};
+  if(key === 'areas') return {t: 'Áreas de pesquisa', o: 'Mostra as áreas do conhecimento em que a base classificou os documentos.', l: 'Indica quais campos estudam o tema e quão interdisciplinar ele é.', c: 'A classificação é da base de dados, feita em geral pelo periódico e não pelo conteúdo de cada artigo. Um documento pode pertencer a várias áreas.',
+    p: (R.areas || []).length ? `As áreas de pesquisa com mais documentos foram ${top(R.areas, 5)}.` : 'O arquivo não traz a classificação por área de pesquisa.'};
+  if(key === 'lotka'){ const L = R.lotka; return {t: 'Lei de Lotka', o: 'Compara o número de autores com 1, 2, 3 ou mais documentos com o previsto pela lei de Lotka: poucos autores produzem muito e muitos produzem pouco.', l: 'Na forma clássica, o número de autores com n documentos cai na proporção de 1/n², e cerca de 60% dos autores têm um único documento. Expoente acima de 2 indica produção mais concentrada em poucos autores. O teste de Kolmogorov-Smirnov diz se a distribuição observada é compatível com a lei: quando D é menor que o valor crítico, é compatível.', c: 'O resultado depende de nomes bem padronizados. O expoente é estimado por regressão log-log, que é simples mas sensível a poucos autores muito produtivos.',
+    p: `A produtividade dos ${fmt(L.totalAuthors)} autores foi avaliada pela lei de Lotka (Lotka, 1926). Do total, ${fmt1(L.pctSingle)}% publicaram um único documento.` + (isFinite(L.exponent) ? ` O expoente ajustado foi ${fmt2(L.exponent)} (R² = ${fmt2(L.r2)}).` : '') + ` O teste de Kolmogorov-Smirnov contra o modelo clássico (n = 2) resultou em D = ${fmt2(L.D)}, para um valor crítico de ${fmt2(L.ksCrit)} (α = 0,01), indicando que a distribuição ${L.fits ? 'é compatível com a' : 'difere da'} lei de Lotka.`}; }
+  if(key === 'bradford'){ const B = R.bradford; return {t: 'Lei de Bradford', o: 'Divide os periódicos em três zonas com cerca de um terço dos documentos cada. A zona 1 é o núcleo: poucos periódicos que concentram muita produção.', l: 'A lei prevê que o número de periódicos cresce de uma zona para a outra por um fator constante (1 : n : n²). O núcleo é a lista prioritária para leitura e submissão. Uma curva acumulada que sobe rápido no início indica forte concentração.', c: 'Com poucos periódicos ou poucos documentos, as zonas ficam instáveis. Unifique nomes de periódicos antes de interpretar.',
+    p: `A dispersão dos ${fmt(B.articles)} documentos em ${fmt(B.journals)} periódicos foi analisada pela lei de Bradford (Bradford, 1934). As três zonas reuniram ${B.zoneCounts.join(', ').replace(/, ([^,]*)$/, ' e $1')} periódicos, respectivamente.` + (isFinite(B.multiplier) ? ` O multiplicador médio entre zonas foi ${fmt1(B.multiplier)}.` : '') + (B.core && B.core.length ? ` O núcleo foi formado por ${B.core.slice(0, 5).map(j => j.journal).join(', ')}${B.core.length > 5 ? ', entre outros' : ''}.` : '')}; }
+  if(key === 'zipf'){ const Z = R.zipf; return {t: 'Lei de Zipf', o: 'Relaciona a posição de cada palavra-chave no ranking com a sua frequência, em escala log-log.', l: 'A lei prevê uma reta com inclinação próxima de -1: a segunda palavra aparece metade das vezes da primeira, a terceira um terço, e assim por diante. Inclinação mais negativa indica vocabulário concentrado em poucos termos. Inclinação menos negativa indica tema disperso em muitos assuntos.', c: 'Depende da padronização das palavras-chave. Com poucas palavras-chave o ajuste não é confiável.',
+    p: isFinite(Z.slope) ? `A distribuição das ${fmt(Z.uniqueKeywords)} palavras-chave distintas (${fmt(Z.totalOccurrences)} ocorrências) foi avaliada pela lei de Zipf (Zipf, 1949). A reta ajustada em escala log-log teve inclinação de ${fmt2(Z.slope)} (R² = ${fmt2(Z.r2)}), para um valor teórico próximo de -1.` : 'O corpus tem poucas palavras-chave para avaliar a lei de Zipf.'}; }
+  if(key === 'net'){
+    const N = typeof NET_CUR !== 'undefined' ? NET_CUR : null, w = helpNetWords(N && N.type);
+    const base = {t: 'Rede de ' + w.title,
+      o: `Cada círculo (nó) é ${w.art} ${w.node}. Uma linha (ligação) une dois ${w.nodes} que ${w.link}.`,
+      l: `Tamanho do nó: número de ligações, ou seja, com quantos outros ${w.nodes} ele se conecta. Não é o número de documentos. Espessura da linha: quantos documentos os dois têm em comum. Cor: comunidade (cluster), um grupo de ${w.nodes} mais ligados entre si do que com o resto da rede. Nó isolado: sem nenhuma ligação dentro do conjunto exibido. Densidade: fração das ligações possíveis que de fato existem, de 0 a 1. Grau médio: número médio de ligações por nó.` + (N && N.type === 'country' ? ' ' + countryNote + ' País isolado significa que, neste corpus, os documentos daquele país não tiveram coautores de outros países. Não significa ausência de relação científica fora do corpus.' : ''),
+      c: 'O número de comunidades inclui os nós isolados, e cada isolado conta como uma comunidade. A rede mostra só os nós que passam pelos filtros de mínimo de documentos e máximo de nós: mudar os filtros muda a rede. A posição dos nós na figura é só visual. O que importa é quem está ligado a quem e a cor do grupo.'};
+    if(!N || !N.nodes.length) return Object.assign(base, {p: 'A rede não tem nós com os filtros atuais.'});
+    const nN = N.nodes.length, nE = N.edges.length, dens = nN > 1 ? nE/(nN*(nN-1)/2) : 0, avg = nN ? nE*2/nN : 0;
+    const size = new Map(); N.nodes.forEach(n => { const c = N.comm.get(n.id); size.set(c, (size.get(c) || 0) + 1); });
+    const multi = [...size.values()].filter(v => v > 1).length, iso = N.nodes.filter(n => N.deg.get(n.id) === 0).length;
+    const hubs = [...N.nodes].sort((a,b) => N.deg.get(b.id) - N.deg.get(a.id) || b.docs - a.docs).filter(n => N.deg.get(n.id) > 0).slice(0, 3).map(n => `${n.id} (${N.deg.get(n.id)} ligações)`).join(', ');
+    const e0 = N.edges[0];
+    return Object.assign(base, {p: `A rede de ${w.title} foi construída com ${fmt(nN)} nós e ${fmt(nE)} ligações (densidade = ${fmt2(dens)}; grau médio = ${fmt1(avg)}). Cada nó representa ${w.art} ${w.node}` + (N.type === 'country' ? ', atribuído pela afiliação institucional dos autores,' : '') + ` e cada ligação une dois ${w.nodes} que ${w.link}. O tamanho do nó é proporcional ao número de ligações, a espessura da linha ao número de documentos em comum e a cor identifica a comunidade detectada por propagação de rótulos (Raghavan et al., 2007). Foram identificados ${fmt(multi)} grupos com dois ou mais nós e ${fmt(iso)} nós isolados.` + (hubs ? ` Os nós mais conectados foram ${hubs}.` : '') + (e0 ? ` A ligação mais forte ocorreu entre ${e0.s} e ${e0.t} (${fmt(e0.w)} documentos em comum).` : '')});
+  }
+  if(key === 'map') return {t: 'Mapa de produção', o: 'Colore cada país, ou cada estado do Brasil, pelo número de documentos.', l: countryNote + ' Cores mais intensas indicam mais documentos. A escala logarítmica ajuda quando um país domina e esconde os demais.', c: 'Países em cinza não têm documentos no corpus ou não tiveram a afiliação identificada. O mapa mostra volume, não qualidade nem impacto.',
+    p: (R.countries || []).length ? `O mapa representa o número de documentos por país de afiliação dos autores (contagem inteira). Os países com mais documentos foram ${top(R.countries, 5)}.` : 'O arquivo não traz afiliações, então o mapa não pôde ser gerado a partir do corpus.'};
+  return null;
+}
+function helpOpen(key){
+  if(!RESULTS){ toast('Sem resultados'); return; }
+  const h = helpContent(key); if(!h) return;
+  const sec = (label, txt) => txt ? `<div class="fig-sec">${label}</div><div class="help-txt">${figEsc(txt)}</div>` : '';
+  const p = figPanel('Como ler esta análise', h.t, sec('O que mostra', h.o) + sec('Como ler', h.l) + sec('Cuidados', h.c) +
+    `<div class="fig-sec">Texto pronto para usar</div><div class="help-paste" id="help-paste">${figEsc(h.p)}</div><div class="fig-act"><button class="btn sm primary" type="button" data-a="copy">Copiar texto</button></div><div class="help-txt" style="margin-top:8px;color:var(--muted)">Os números vêm dos resultados atuais deste projeto. Revise e adapte antes de usar.</div>`);
+  p.classList.add('help');
+  p.querySelector('[data-a="copy"]').addEventListener('click', () => {
+    const t = h.p;
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Texto copiado')).catch(() => { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); toast('Texto copiado'); }catch(e){ toast('Selecione o texto e copie'); } ta.remove(); });
+  });
+}
+function helpButtons(){
+  const add = (h3, key) => {
+    if(!h3 || h3.querySelector('.helpq')) return;
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'helpq'; b.textContent = '?'; b.title = 'O que esta análise significa'; b.setAttribute('aria-label', 'Explicação desta análise');
+    b.addEventListener('click', ev => { ev.stopPropagation(); helpOpen(key); });
+    h3.appendChild(b);
+  };
+  const byCanvas = {'ch-temporal': 'temporal', 'ch-trend': 'trend', 'ch-autores': 'autores', 'ch-journals': 'journals', 'ch-paises': 'paises', 'ch-kw': 'kw', 'ch-areas': 'areas', 'ch-lotka': 'lotka', 'ch-bradford': 'bradford', 'ch-zipf': 'zipf'};
+  Object.entries(byCanvas).forEach(([id, key]) => add(document.getElementById(id)?.closest('.card')?.querySelector('.charthead h3'), key));
+  add(document.getElementById('k-geral')?.closest('.card')?.querySelector('h3'), 'geral');
+  add(document.querySelector('#net-body .card > h3'), 'net');
+  add(document.querySelector('#tab-mapa .card > h3'), 'map');
+}
+
 function renderAll(){
   if(!RESULTS) return clearAnalysisUI();
   ['leis','an','net'].forEach(p => { document.getElementById(p + '-empty').classList.add('hidden'); document.getElementById(p + '-body').classList.remove('hidden'); });
@@ -1803,6 +1981,7 @@ function renderAll(){
   const peak = [...T].sort((a,b) => b[1]-a[1])[0] || null;
   $('#i-temporal').innerHTML = `Produção de <b>${fmt(S.documents)} documentos</b>` + (peak ? ` entre ${S.yearMin} e ${S.yearMax}, com pico de ${fmt(peak[1])} em ${peak[0]}. ` : ', sem ano de publicação identificado. ') + (S.growth == null ? 'Série curta demais para estimar taxa de crescimento.' : `Taxa composta de crescimento anual de <b>${fmt1(S.growth)}%</b> entre o primeiro e o último ano completo` + (S.doubling ? `, o que corresponde a um tempo de duplicação de ${fmt1(S.doubling)} anos.` : '.'));
 
+  try{ renderTrend(); }catch(e){ console.warn('Tendência do tema:', e); }
   hbar('ch-autores', RESULTS.authors.slice(0, 20), 'Documentos', PAL[0]);
   hbar('ch-journals', RESULTS.journals.slice(0, 15), 'Documentos', PAL[2]);
   hbar('ch-paises', RESULTS.countries.slice(0, 20), 'Documentos (contagem inteira)', PAL[3]);
@@ -1837,6 +2016,7 @@ function renderAll(){
   $('#i-zipf').innerHTML = Z.table.length < 5 ? 'Poucas palavras-chave para avaliar a lei de Zipf.' : `O vocabulário tem ${fmt(Z.uniqueKeywords)} termos distintos. A reta em escala log-log tem inclinação <b>${fmt2(Z.slope)}</b> (R² = ${fmt2(Z.r2)}); a lei prevê valor próximo de -1. Inclinação mais negativa indica vocabulário concentrado em poucos termos dominantes; menos negativa indica campo tematicamente disperso. O produto rank × frequência tende a ser constante nas primeiras posições.`;
 
   renderNetwork();
+  try{ helpButtons(); }catch(e){ console.warn('Explicações:', e); }
   adaptSciELOUI();
   $('#save-status').textContent = '';
 }
@@ -2245,6 +2425,7 @@ function allTables(){
   const R = RESULTS;
   return [
     ['producao-anual', [['Ano','Documentos'], ...R.temporal]],
+    ...(TREND_CUR && TREND_CUR.ok ? [['tendencia-modelos', [['Modelo','Equação','R2','R2 ajustado','Melhor ajuste'], ...TREND_CUR.models.map(m => [m.label, m.eq, m.r2.toFixed(4), m.adj.toFixed(4), m === TREND_CUR.best ? 'sim' : ''])]]] : []),
     ['autores', [['Autor','Documentos'], ...R.authors]], ['periodicos', [['Periódico','Documentos'], ...R.journals]],
     ['palavras-chave', [['Palavra-chave','Ocorrências'], ...R.keywords]], ['keywords-plus', [['Keywords Plus','Ocorrências'], ...R.kwplus]],
     ['areas', [['Área','Documentos'], ...R.areas]], ['paises', [['País','Documentos'], ...R.countries]], ['instituicoes', [['Instituição','Documentos'], ...R.institutions]],
@@ -2275,6 +2456,7 @@ function reportHTML(){
 <h2>Protocolo</h2>${tbl(['Campo','Valor'], [['String de busca', pr.query || ''],['Data da busca', pr.date || ''],['Registros retornados', pr.n ?? ''],['Filtros', pr.filters || ''],['Observações', pr.notes || '']])}
 <h2>Visão geral</h2>${[[fmt(S.documents),'documentos'],[S.yearMin == null ? 'sem ano' : `${S.yearMin}–${S.yearMax}`,'período'],[fmt(S.authors),'autores'],[fmt(S.journals),'periódicos'],[fmt(S.countries),'países'],[fmt(S.totalCitations),'citações'],[fmt1(S.citPerDoc),'citações/doc'],[fmt2(S.collabIndex),'autores/doc'],[S.growth == null ? '–' : fmt1(S.growth)+'%','crescimento anual']].map(([v,l]) => `<div class="kp"><b>${v}</b><span>${l}</span></div>`).join('')}
 <h2>Produção anual</h2>${img('ch-temporal')}<p class="i">${$('#i-temporal').textContent}</p>
+${CHARTS['ch-trend'] ? '<h2>Tendência do tema</h2>' + img('ch-trend') + '<p class="i">' + $('#i-trend').textContent + '</p>' : ''}
 <h2>Lei de Lotka</h2>${img('ch-lotka')}<p class="i">${$('#i-lotka').textContent}</p>${tbl(['n','Observado','Esperado n=2','Esperado ajuste'], R.lotka.table.map(t => [t.n, t.observed, t.expected2.toFixed(1), isFinite(t.expectedFit) ? t.expectedFit.toFixed(1) : '']))}
 <h2>Lei de Bradford</h2>${img('ch-bradford')}<p class="i">${$('#i-bradford').textContent}</p><h3>Núcleo</h3>${tbl(['#','Periódico','Documentos'], R.bradford.core.slice(0,25).map((j,i) => [i+1, j.journal, j.n]))}
 <h2>Lei de Zipf</h2>${img('ch-zipf')}<p class="i">${$('#i-zipf').textContent}</p>${tbl(['Rank','Termo','Frequência'], R.zipf.table.slice(0,30).map(t => [t.rank, t.term, t.freq]))}
