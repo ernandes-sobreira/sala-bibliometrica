@@ -565,7 +565,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -907,7 +907,58 @@ function edRenderValues(){
   if(dl)dl.innerHTML=all.slice(0,2000).map(([v,n])=>'<option value="'+edEsc(v)+'">'+n+' ocorrência(s)</option>').join('');if(!box)return;
   box.innerHTML='<thead><tr><th>Valor encontrado</th><th class="n">Ocorrências</th><th>Usado como</th><th></th></tr></thead><tbody>'+vals.slice(0,100).map(([v,n])=>{const rr=edCurrentRule(field,v),now=rr?(rr.remove?'REMOVIDO':rr.to):v;return '<tr><td>'+edEsc(v)+'</td><td class="n">'+n+'</td><td>'+edEsc(now)+'</td><td><button class="btn sm" type="button" onclick="edPick(\''+encodeURIComponent(v)+'\')">Editar</button></td></tr>';}).join('')+'</tbody>';
 }
-function edFieldChanged(){const a=document.getElementById('ed-from'),b=document.getElementById('ed-to'),s=document.getElementById('ed-search');if(a)a.value='';if(b)b.value='';if(s)s.value='';edRenderValues();edRenderRules();}
+let ED_SUG=[];
+function edAuthorKey(v){
+  const s0=String(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\./g,' ').replace(/\s+/g,' ').trim();
+  let sur=s0,giv='';
+  if(s0.includes(',')){sur=s0.split(',')[0];giv=s0.split(',').slice(1).join(' ');}
+  else{const t=s0.split(' ');if(t.length>1&&/^[A-Z]{1,3}$/.test(t[t.length-1])){giv=t.pop();sur=t.join(' ');}else if(t.length>1){sur=t[t.length-1];giv=t.slice(0,-1).join(' ');}}
+  sur=sur.toLowerCase().replace(/[^a-z ]/g,'').trim();giv=giv.trim();
+  return sur?sur+'|'+(giv?giv[0].toLowerCase():''):'';
+}
+function edDupKey(field,v){
+  const n=edNorm(v);if(!n)return '';
+  if(field==='authors')return edAuthorKey(v)||n;
+  if(field==='keywords'||field==='kwplus')return n.replace(/\b([a-z]{3,}?)(?:es|s|e)\b/g,'$1');
+  if(field==='journal')return n.replace(/\b(journal|jornal)\b/g,'j').replace(/\b(revista|review)\b/g,'rev').replace(/\b(the|of|and|de|da|do|e|em|in|for)\b/g,' ').replace(/\s+/g,' ').trim()||n;
+  return n;
+}
+function edIgnoreStore(){const r=edRuleStore();if(!r.__ignore||typeof r.__ignore!=='object')r.__ignore={};return r.__ignore;}
+function edSuggest(field){
+  const groups=new Map(),ign=edIgnoreStore()[field]||{};
+  for(const [v,n] of edValues(field)){
+    const rv=String(edResolve(field,v)).trim();if(!rv)continue;
+    const key=edDupKey(field,rv);if(!key||ign[key])continue;
+    let g=groups.get(key);if(!g){g={key,variants:new Map(),total:0};groups.set(key,g);}
+    let x=g.variants.get(rv);if(!x){x={n:0,bases:[]};g.variants.set(rv,x);}
+    x.n+=n;x.bases.push(v);g.total+=n;
+  }
+  return [...groups.values()].filter(g=>g.variants.size>1).map(g=>{
+    const vs=[...g.variants.entries()].sort((a,b)=>b[1].n-a[1].n||b[0].length-a[0].length);
+    const exact=new Set(vs.map(([v])=>edNorm(v))).size===1;
+    return {key:g.key,total:g.total,variants:vs,target:vs[0][0],exact};
+  }).sort((a,b)=>b.total-a.total);
+}
+function edRenderSuggest(){
+  const box=document.getElementById('ed-suggest');if(!box)return;
+  const field=document.getElementById('ed-field')?.value||'authors';ED_SUG=edSuggest(field);
+  const head=document.getElementById('ed-suggest-n');if(head)head.textContent=ED_SUG.length?'('+ED_SUG.length+')':'';
+  if(!ED_SUG.length){box.innerHTML='<span class="small muted">Nenhum possível duplicado encontrado neste campo.</span>';return;}
+  const warn=field==='authors'?'<div class="small muted" style="margin-bottom:8px">Em autores, a sugestão compara sobrenome e primeira inicial. Confira antes de unir: podem ser pessoas diferentes.</div>':'';
+  box.innerHTML=warn+ED_SUG.slice(0,60).map((g,i)=>'<div style="padding:10px 0;border-bottom:1px solid #edf0f3"><div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">'+g.variants.map(([v,x])=>'<span class="pill">'+edEsc(v)+' ('+x.n+')</span>').join('')+'</div><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><span class="small muted">Unir como</span><input id="ed-sug-'+i+'" value="'+edEsc(g.target)+'" style="flex:1;min-width:180px;max-width:420px;border:1px solid var(--line2);border-radius:8px;padding:7px 10px;font:14px var(--sans)"><button class="btn sm primary" type="button" onclick="edMerge('+i+')">Unir</button><button class="btn sm" type="button" onclick="edIgnore('+i+')">Não são duplicados</button></div></div>').join('')+(ED_SUG.length>60?'<div class="small muted" style="margin-top:8px">Mostrando os 60 grupos com mais ocorrências.</div>':'');
+}
+async function edMerge(i){
+  const g=ED_SUG[i],field=document.getElementById('ed-field')?.value;if(!g||!field)return;
+  const to=(document.getElementById('ed-sug-'+i)?.value||'').trim();if(!to){if(typeof toast==='function')toast('Informe como o nome deve ficar.');return;}
+  const rules=edRuleStore()[field];let k=0;
+  g.variants.forEach(([rv,x])=>x.bases.forEach(v=>{if(v!==to||rv!==to){rules[edNorm(v)]={from:v,to,remove:false,updatedAt:new Date().toISOString()};k++;}}));
+  await edPersistRules();edRecompute(g.variants.length+' grafias unidas em "'+to+'". Análises recalculadas.');
+}
+async function edIgnore(i){
+  const g=ED_SUG[i],field=document.getElementById('ed-field')?.value;if(!g||!field)return;
+  const ig=edIgnoreStore();ig[field]=ig[field]||{};ig[field][g.key]=true;await edPersistRules();edRenderSuggest();
+}
+function edFieldChanged(){const a=document.getElementById('ed-from'),b=document.getElementById('ed-to'),s=document.getElementById('ed-search');if(a)a.value='';if(b)b.value='';if(s)s.value='';edRenderValues();edRenderRules();edRenderSuggest();}
 function edEnsureUI(){
   if(typeof CORPUS==='undefined'||!CORPUS)return;const host=document.getElementById('data-summary');if(!host)return;let card=document.getElementById('ed-card');
   if(!card){card=document.createElement('div');card.id='ed-card';card.className='card';card.innerHTML='<div class="charthead"><div><h3>Editar nomes e termos</h3><div class="lead">Corrija autores, revistas, palavras-chave, países, instituições e outros campos sem abrir o CSV. Ao aplicar, gráficos, estatísticas, redes e mapas mudam imediatamente. O arquivo original fica intacto.</div></div><button class="btn sm" type="button" onclick="edClearRules()">Limpar correções</button></div>'+
@@ -915,19 +966,24 @@ function edEnsureUI(){
     '<div class="grid2"><div class="field"><label>Valor atual</label><input id="ed-from" list="ed-datalist" placeholder="ex.: Brazil"><datalist id="ed-datalist"></datalist></div><div class="field"><label>Trocar por</label><input id="ed-to" placeholder="ex.: Brasil"></div></div>'+
     '<div class="actions"><button class="btn primary" type="button" onclick="edSetRule(false)">Aplicar e atualizar tudo agora</button><button class="btn" type="button" onclick="edSetRule(true)">Excluir este valor das análises</button></div>'+
     '<div class="small muted" style="margin-top:8px">Ex.: Brazil → Brasil; duas grafias do mesmo autor → um único nome; abreviação de periódico → nome completo; palavra-chave genérica → excluir.</div>'+
+    '<div style="margin-top:18px"><b class="small">Possíveis duplicados neste campo <span id="ed-suggest-n"></span></b><div class="small muted" style="margin:2px 0 6px">Grafias diferentes que parecem ser o mesmo nome ou termo. Confira, ajuste o nome final e clique em Unir.</div><div id="ed-suggest" class="tscroll" style="max-height:420px"></div></div>'+
     '<div class="grid2" style="margin-top:16px;align-items:start"><div><b class="small">Valores encontrados</b><div class="tscroll" style="max-height:380px;margin-top:6px"><table class="t" id="ed-values-table"></table></div></div><div><b class="small">Correções ativas</b><div id="ed-rules" style="margin-top:6px"></div></div></div>';
     const cards=host.querySelectorAll(':scope > .card');if(cards.length>1)host.insertBefore(card,cards[1]);else host.appendChild(card);
   }
-  edRenderValues();edRenderRules();
+  edRenderValues();edRenderRules();edRenderSuggest();
 }
 function edEnsureShortcut(){
-  const actions=document.querySelector('.topbar .actions');if(!actions||document.getElementById('ed-shortcut'))return;
-  const b=document.createElement('button');b.id='ed-shortcut';b.className='btn';b.type='button';b.textContent='Editar nomes e termos';b.onclick=edGoEditor;actions.prepend(b);
+  const actions=document.getElementById('proj-actions');if(!actions||actions.querySelector('#ed-shortcut')||typeof PROJ==='undefined'||!PROJ)return;
+  const b=document.createElement('button');b.id='ed-shortcut';b.className='btn sm';b.type='button';b.textContent='Editar nomes e termos';b.onclick=()=>edGoEditor();actions.prepend(b);
 }
-async function edGoEditor(){
+async function edGoEditor(field){
   if(typeof showTab==='function')showTab('dados');
   if((typeof CORPUS==='undefined'||!CORPUS)&&typeof reloadRaw==='function'&&PROJ?.file?.path){try{await reloadRaw();}catch(e){console.warn(e);}}
-  setTimeout(()=>{edRenderUI();document.getElementById('ed-card')?.scrollIntoView({behavior:'smooth',block:'start'});},120);
+  if(typeof CORPUS==='undefined'||!CORPUS){
+    if(typeof setMsg==='function')setMsg('data-msg','Para editar nomes e termos, o arquivo do projeto precisa estar carregado. Importe o arquivo de novo nesta aba (arraste ou clique na área de envio). As correções já salvas no projeto são reaplicadas automaticamente.','warn');
+    return;
+  }
+  setTimeout(()=>{edRenderUI();const sel=document.getElementById('ed-field');if(sel&&typeof field==='string'&&ED_FIELDS[field]&&sel.value!==field){sel.value=field;edFieldChanged();}document.getElementById('ed-card')?.scrollIntoView({behavior:'smooth',block:'start'});},120);
 }
 function edRenderUI(){try{edEnsureShortcut();edEnsureUI();}catch(e){console.warn('Editor UI:',e);}}
 function edDecodeSaved(){
@@ -940,12 +996,13 @@ function edInstall(){
   if(ED_INSTALLED)return;if(typeof computeAll!=='function'||typeof renderCorpusUI!=='function'||typeof buildCorpus!=='function'||typeof renderAll!=='function')return setTimeout(edInstall,50);ED_INSTALLED=true;
   ED_RAW_COMPUTE=computeAll;computeAll=function(){edPrepareCorpus();return ED_RAW_COMPUTE();};
   ED_RAW_RENDER_CORPUS=renderCorpusUI;renderCorpusUI=function(){const x=ED_RAW_RENDER_CORPUS();setTimeout(edRenderUI,0);return x;};
+  if(typeof renderProjectLine==='function'){const rawLine=renderProjectLine;renderProjectLine=function(){const x=rawLine();try{edEnsureShortcut();}catch(e){}return x;};}
   ED_RAW_BUILD=buildCorpus;buildCorpus=function(rows){edResetBase();return ED_RAW_BUILD(rows);};
   ED_RAW_RENDER_ALL=renderAll;renderAll=function(){edDecodeSaved();const x=ED_RAW_RENDER_ALL();setTimeout(edRenderUI,0);return x;};
   if(typeof slimResults==='function'){const rawSlim=slimResults;slimResults=edFirestoreSafeSlim(rawSlim);}
   setTimeout(edRenderUI,0);
 }
-window.edSetRule=edSetRule;window.edRemoveRule=edRemoveRule;window.edClearRules=edClearRules;window.edPick=edPick;window.edRenderValues=edRenderValues;window.edFieldChanged=edFieldChanged;window.edGoEditor=edGoEditor;
+window.edMerge=edMerge;window.edIgnore=edIgnore;window.edSetRule=edSetRule;window.edRemoveRule=edRemoveRule;window.edClearRules=edClearRules;window.edPick=edPick;window.edRenderValues=edRenderValues;window.edFieldChanged=edFieldChanged;window.edGoEditor=edGoEditor;
 setTimeout(edInstall,0);
 
 /* Reparo complementar do editor: preserva/recupera enriquecimento SciELO após recarga do CSV bruto. */
@@ -1290,7 +1347,7 @@ function splitScopusAuthors(str){
 }
 /* Remove registros duplicados: mesmo DOI ou, na falta dele, mesmo título e ano. */
 function dedupeRecords(records){
-  const seen = new Map(), out = []; let removed = 0;
+  const seen = new Map(), out = [], list = []; let removed = 0;
   const nt = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
   for(const r of records){
     const doi = String(r.doi || '').toLowerCase().replace(/^https?:\/\/(dx\.)?doi\.org\//, '').trim();
@@ -1298,10 +1355,10 @@ function dedupeRecords(records){
     if(doi) keys.push('d:' + doi);
     if(t.length >= 12) keys.push('t:' + t + '|' + (r.year || ''));
     const hit = keys.map(k => seen.get(k)).find(Boolean);
-    if(hit){ removed++; if((r.citations || 0) > (hit.citations || 0)) hit.citations = r.citations; keys.forEach(k => seen.set(k, hit)); continue; }
+    if(hit){ removed++; if(list.length < 500) list.push({title: r.title, year: r.year, doi: r.doi, by: doi && seen.get('d:' + doi) ? 'DOI' : 'título e ano'}); if((r.citations || 0) > (hit.citations || 0)) hit.citations = r.citations; keys.forEach(k => seen.set(k, hit)); continue; }
     keys.forEach(k => seen.set(k, r)); out.push(r);
   }
-  return {records: out, removed};
+  return {records: out, removed, list};
 }
 function buildCorpus(rows){
   const cols = Object.keys(rows[0]);
@@ -1332,7 +1389,7 @@ function buildCorpus(rows){
     return o;
   }).filter(o => o.title || o.authors.length);
   const dd = dedupeRecords(records);
-  return {format, records: dd.records, columns: cols, duplicates: dd.removed};
+  return {format, records: dd.records, columns: cols, duplicates: dd.removed, duplicateList: dd.list};
 }
 const COUNTRY_FIX = {'USA':'United States','U.S.A.':'United States','UNITED STATES OF AMERICA':'United States','ENGLAND':'United Kingdom','SCOTLAND':'United Kingdom','WALES':'United Kingdom','NORTH IRELAND':'United Kingdom','NORTHERN IRELAND':'United Kingdom','UK':'United Kingdom','PEOPLES R CHINA':'China',"PEOPLE'S REPUBLIC OF CHINA":'China','RUSSIA':'Russian Federation','SOUTH KOREA':'Republic of Korea','KOREA':'Republic of Korea','IRAN':'Iran','VIET NAM':'Vietnam','TURKIYE':'Turkey','CZECHIA':'Czech Republic','U ARAB EMIRATES':'United Arab Emirates','BRASIL':'Brazil','TAIWAN':'Taiwan'};
 function normCountry(c){
@@ -1377,7 +1434,7 @@ function renderCorpusUI(){
   const R = CORPUS.records;
   const withAff = R.filter(r => r.countries.length).length, withKw = R.filter(r => r.keywords.length).length, withYear = R.filter(r => r.year).length;
   $('#corpus-kpis').innerHTML = [[fmt(R.length),'documentos'],[esc(CORPUS.format),'formato'],[fmt(withYear),'com ano'],[fmt(withKw),'com palavras-chave'],[fmt(withAff),'com país identificado'],[fmt(CORPUS.duplicates || 0),'duplicatas removidas']].map(([v,l]) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join('');
-  $('#corpus-fields').innerHTML = '<span class="small muted">Colunas lidas: </span>' + CORPUS.columns.slice(0, 40).map(c => `<span class="pill">${esc(c)}</span>`).join('');
+  $('#corpus-fields').innerHTML = '<span class="small muted">Colunas lidas: </span>' + CORPUS.columns.slice(0, 40).map(c => `<span class="pill">${esc(c)}</span>`).join('') + ((CORPUS.duplicateList || []).length ? `<details style="margin-top:10px"><summary class="small" style="cursor:pointer">Ver os ${fmt(CORPUS.duplicates)} registros duplicados removidos</summary><div class="tscroll" style="max-height:260px;margin-top:6px"><table class="t"><thead><tr><th>Título</th><th>Ano</th><th>DOI</th><th>Critério</th></tr></thead><tbody>${CORPUS.duplicateList.map(d => `<tr><td>${esc(cut(String(d.title || ''), 90))}</td><td>${d.year || '–'}</td><td>${esc(d.doi || '')}</td><td>${d.by}</td></tr>`).join('')}</tbody></table></div></details>` : '');
   $('#preview-count').textContent = 'primeiros 30 de ' + fmt(R.length);
   $('#preview').innerHTML = '<thead><tr><th>Ano</th><th>Autores</th><th>Título</th><th>Periódico</th><th class="n">Citações</th></tr></thead><tbody>' + R.slice(0, 30).map(r => `<tr><td>${r.year||'–'}</td><td>${esc(cut(r.authors.join('; '), 60))}</td><td>${esc(cut(r.title, 90))}</td><td>${esc(cut(r.journal, 40))}</td><td class="n">${fmt(r.citations)}</td></tr>`).join('') + '</tbody>';
 }
@@ -1621,6 +1678,8 @@ function figButtons(){
     btn.parentNode.insertBefore(wrap, btn);
     const ed = document.createElement('button'); ed.className = 'btn sm'; ed.type = 'button'; ed.textContent = 'Editar';
     ed.addEventListener('click', () => figOpen(m[1], m[2]));
+    const fld = {'ch-autores':'authors','ch-journals':'journal','ch-paises':'countries','ch-kw':'keywords','ch-areas':'area'}[m[1]];
+    if(fld && typeof edGoEditor === 'function'){ const fx = document.createElement('button'); fx.className = 'btn sm'; fx.type = 'button'; fx.textContent = 'Corrigir nomes'; fx.addEventListener('click', () => edGoEditor(fld)); wrap.append(fx); }
     wrap.append(ed, btn);
   });
   const act = document.querySelector('#tab-redes .ctrls .actions');
