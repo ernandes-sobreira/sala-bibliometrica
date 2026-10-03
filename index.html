@@ -433,6 +433,15 @@ table.t th.n{text-align:right}
       <div id="an-empty" class="empty"><h3>Sem corpus</h3>Importe um arquivo na aba Dados.</div>
       <div id="an-body" class="hidden">
         <div class="card"><h3>Visão geral</h3><div class="kpis" id="k-geral"></div></div>
+        <div class="card" id="flow-card">
+          <div class="charthead"><h3>Fluxograma do método</h3><span class="fig-btns"><button class="btn sm" type="button" onclick="dlSVG('flowsvg','fluxograma')">Baixar SVG</button><button class="btn sm" type="button" onclick="flowPNG()">Baixar PNG</button></span></div>
+          <div class="lead">Da busca ao corpus analisado: bases consultadas, registros identificados, duplicados removidos e documentos incluídos. Os números vêm do que foi importado neste projeto.</div>
+          <div class="grid2" style="align-items:start;margin-bottom:12px">
+            <div class="field" style="margin:0"><label>Estratégia de busca mostrada no fluxograma</label><textarea id="flow-query" style="min-height:74px" oninput="flowEdit()" placeholder="Por padrão, usa a string salva no Roteiro de busca"></textarea></div>
+            <div class="field" style="margin:0"><label>Exclusões feitas depois, fora da Sala (opcional)</label><textarea id="flow-excl" style="min-height:74px" oninput="flowEdit()" placeholder="Uma por linha, no formato motivo; número&#10;Fora do tema; 120&#10;Sem dados originais; 35"></textarea><label style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer"><input type="checkbox" id="flow-gray" onchange="flowEdit()" style="width:auto">Tons de cinza</label></div>
+          </div>
+          <div id="flow-box" style="overflow-x:auto"></div>
+        </div>
         <div class="card hidden" id="bases-an">
           <div class="charthead"><h3>Bases de dados do corpus</h3><button class="btn sm" onclick="dlChart('ch-bases','bases')">Baixar PNG</button></div>
           <div class="chartbox" style="height:220px"><canvas id="ch-bases"></canvas></div>
@@ -611,7 +620,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.6.0";
+const APP_VERSION = "1.7.0";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -1459,7 +1468,7 @@ function buildCorpus(rows){
   }).filter(o => o.title || o.authors.length);
   records.forEach(r => { r.sources = [format]; });
   const dd = dedupeRecords(records);
-  return {format, records: dd.records, columns: cols, duplicates: dd.removed, duplicateList: dd.list};
+  return {format, records: dd.records, columns: cols, duplicates: dd.removed, duplicateList: dd.list, flowFiles: [{base: format, read: records.length}]};
 }
 const COUNTRY_FIX = {'USA':'United States','U.S.A.':'United States','UNITED STATES OF AMERICA':'United States','ENGLAND':'United Kingdom','SCOTLAND':'United Kingdom','WALES':'United Kingdom','NORTH IRELAND':'United Kingdom','NORTHERN IRELAND':'United Kingdom','UK':'United Kingdom','PEOPLES R CHINA':'China',"PEOPLE'S REPUBLIC OF CHINA":'China','RUSSIA':'Russian Federation','SOUTH KOREA':'Republic of Korea','KOREA':'Republic of Korea','IRAN':'Iran','VIET NAM':'Vietnam','TURKIYE':'Turkey','CZECHIA':'Czech Republic','U ARAB EMIRATES':'United Arab Emirates','BRASIL':'Brazil','TAIWAN':'Taiwan'};
 function normCountry(c){
@@ -1504,7 +1513,8 @@ function extractInstitutions(affil, addresses){
 /* ---------- projeto integrado: várias bases no mesmo corpus ---------- */
 function mergeDup(a, b){   // completa o registro mantido com o que falta, a partir do duplicado
   const S = new Set([...(a.sources || []), ...(b.sources || [])]); if(S.size) a.sources = [...S];
-  ['authors','keywords','kwplus','area','countries','institutions','funding'].forEach(k => { if(!(a[k] || []).length && (b[k] || []).length) a[k] = b[k]; });
+  ['authors','area','countries','institutions','funding'].forEach(k => { if(!(a[k] || []).length && (b[k] || []).length) a[k] = b[k]; });
+  ['keywords','kwplus'].forEach(k => { a[k] = [...new Set([...(a[k] || []), ...(b[k] || [])])]; });
   ['journal','doi','doctype','lang','title'].forEach(k => { if(!a[k] && b[k]) a[k] = b[k]; });
   if(!a.year && b.year) a.year = b.year;
   if((b.citations || 0) > (a.citations || 0)) a.citations = b.citations;
@@ -1519,7 +1529,7 @@ function mergeCorpora(prev, baseRecs, add){
   const dd = dedupeRecords([...baseRecs, ...add.records]);
   const names = [...new Set(dd.records.flatMap(r => r.sources || []))];
   return {format: names.length > 1 ? 'Integrado (' + names.join(' + ') + ')' : (names[0] || prev.format), records: dd.records, columns: [...new Set([...(prev.columns || []), ...(add.columns || [])])],
-    duplicates: (prev.duplicates || 0) + (add.duplicates || 0) + dd.removed, duplicateList: [...(prev.duplicateList || []), ...(add.duplicateList || []), ...dd.list].slice(0, 500), enrichment: prev.enrichment, integrated: true};
+    duplicates: (prev.duplicates || 0) + (add.duplicates || 0) + dd.removed, duplicateList: [...(prev.duplicateList || []), ...(add.duplicateList || []), ...dd.list].slice(0, 500), enrichment: prev.enrichment, integrated: true, flowFiles: [...(prev.flowFiles || []), ...(add.flowFiles || [])]};
 }
 async function readExtraCorpus(file, say){
   const rows = await readRows(file); if(!rows.length) throw new Error('o arquivo não tem linhas de dados');
@@ -1716,7 +1726,7 @@ function computeAll(){
   RESULTS = {
     version: APP_VERSION, computedAt: new Date().toISOString(), format: CORPUS.format,
     summary: {documents: N, yearMin: y0, yearMax: y1, authors: A, journals: journals.length, keywords: keywords.length, countries: countries.length, institutions: institutions.length, totalCitations: totalCit, citPerDoc: N ? totalCit/N : 0, collabIndex: collab, singleAuthored: single, growth, doubling, scp, mcp, withCountry: withC.length, docsPerAuthor: A ? N/A : 0},
-    temporal: perYear, authors: authors.slice(0, 100), journals: journals.slice(0, 100), keywords: keywords.slice(0, 150), kwplus: kwplus.slice(0, 100), areas: areas.slice(0, 60), countries: countries.slice(0, 120), institutions: institutions.slice(0, 100), doctypes: doctypes.slice(0, 20), langs: langs.slice(0, 20), cited, lotka, bradford, zipf, nets, evolution: computeEvolution(R), bases: basesSummary(R)
+    temporal: perYear, authors: authors.slice(0, 100), journals: journals.slice(0, 100), keywords: keywords.slice(0, 150), kwplus: kwplus.slice(0, 100), areas: areas.slice(0, 60), countries: countries.slice(0, 120), institutions: institutions.slice(0, 100), doctypes: doctypes.slice(0, 20), langs: langs.slice(0, 20), cited, lotka, bradford, zipf, nets, evolution: computeEvolution(R), bases: basesSummary(R), flow: {files: CORPUS.flowFiles || [{base: CORPUS.format, read: N + (CORPUS.duplicates || 0)}], unique: N}
   };
 }
 function buildNet(lists, maxNodes){
@@ -2176,6 +2186,84 @@ function renderLinks(){
     `<div class="small muted" style="margin-top:10px">Os links de autores e periódicos abrem uma busca pelo nome. A Sala não sabe qual perfil é o da pessoa: confira a identidade antes de usar, porque nomes abreviados podem corresponder a várias pessoas. O link DOI leva direto ao documento.</div>`;
 }
 
+/* ---------- fluxograma do método: da busca ao corpus analisado ---------- */
+function flowPrefs(){ try{ return JSON.parse(localStorage.getItem('sala-fluxo-' + ((PROJ && PROJ.id) || 'x')) || '{}') || {}; }catch(e){ return {}; } }
+function flowSavePrefs(p){ try{ localStorage.setItem('sala-fluxo-' + ((PROJ && PROJ.id) || 'x'), JSON.stringify(p)); }catch(e){} }
+function flowWrap(text, maxChars, maxLines){
+  const words = String(text || '').replace(/\s+/g, ' ').trim().split(' '), lines = []; let cur = '';
+  words.forEach(w => { while(w.length > maxChars){ if(cur){ lines.push(cur); cur = ''; } lines.push(w.slice(0, maxChars)); w = w.slice(maxChars); }
+    if((cur + ' ' + w).trim().length > maxChars){ lines.push(cur); cur = w; } else cur = (cur + ' ' + w).trim(); });
+  if(cur) lines.push(cur);
+  if(maxLines && lines.length > maxLines){ lines.length = maxLines; lines[maxLines-1] = lines[maxLines-1].slice(0, maxChars - 1) + '…'; }
+  return lines;
+}
+function flowData(){
+  const F = RESULTS && RESULTS.flow; if(!F || !F.files || !F.files.length) return null;
+  const P = flowPrefs(), pr = (PROJ && PROJ.protocol) || {};
+  const byBase = new Map(); F.files.forEach(f => byBase.set(f.base, (byBase.get(f.base) || 0) + f.read));
+  const bases = [...byBase.entries()].map(([name, n]) => ({name, n})), identified = bases.reduce((s,b) => s + b.n, 0), unique = F.unique, dup = Math.max(0, identified - unique);
+  const excl = String(P.excl || '').split('\n').map(l => { const m = /^(.*?)[;:\t]\s*(\d+)\s*$/.exec(l.trim()); return m ? {label: m[1].trim(), n: +m[2]} : null; }).filter(x => x && x.label && x.n > 0);
+  const exN = excl.reduce((s,x) => s + x.n, 0), rules = PROJ && PROJ.normalizationRules ? Object.entries(PROJ.normalizationRules).filter(([k]) => k !== '__ignore').reduce((s, [,v]) => s + Object.keys(v || {}).length, 0) : 0;
+  return {query: (P.query != null && P.query !== '') ? P.query : (pr.query || ''), date: pr.date || '', filters: pr.filters || '', bases, identified, dup, unique, excl, exN, included: Math.max(0, unique - exN), rules, gray: !!P.gray,
+    period: RESULTS.summary.yearMin == null ? '' : RESULTS.summary.yearMin + ' a ' + RESULTS.summary.yearMax};
+}
+function renderFlow(){
+  const host = document.getElementById('flow-box'); if(!host || !RESULTS) return;
+  const P = flowPrefs(), q = document.getElementById('flow-query'), ex = document.getElementById('flow-excl'), gr = document.getElementById('flow-gray');
+  if(q && document.activeElement !== q) q.value = P.query != null && P.query !== '' ? P.query : ((PROJ && PROJ.protocol && PROJ.protocol.query) || '');
+  if(ex && document.activeElement !== ex) ex.value = P.excl || '';
+  if(gr) gr.checked = !!P.gray;
+  const D = flowData();
+  if(!D){ host.innerHTML = '<div class="msg info">O fluxograma precisa dos resultados recalculados na versão atual da Sala. Use o botão Recalcular agora, no alto desta aba.</div>'; return; }
+  const C = D.gray ? {search: '#f1f3f5', base: '#ffffff', id: '#ffffff', dup: '#dfe3e8', uniq: '#ffffff', rule: '#f1f3f5', excl: '#cfd4da', inc: '#e9ecef', an: '#f8f9fa', line: '#333', text: '#111'}
+                   : {search: '#eef6fb', base: '#ffffff', id: '#ffffff', dup: '#bcd9f2', uniq: '#ffffff', rule: '#e8f3ec', excl: '#f6c9a3', inc: '#ffd54a', an: '#f6f8fa', line: '#1a2332', text: '#1a2332'};
+  const W = 980, fs = 14, lh = 19, cx = W/2; let y = 16; const parts = [];
+  const esc2 = v => String(v ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const box = (x, yy, w, lines, fill, o = {}) => { const h = lines.length*lh + 18;
+    parts.push(`<rect x="${x}" y="${yy}" width="${w}" height="${h}" rx="${o.rx ?? 6}" fill="${fill}" stroke="${C.line}" stroke-width="${o.bold ? 2.5 : 1.2}"/>`);
+    lines.forEach((l, i) => parts.push(`<text x="${o.left ? x + 12 : x + w/2}" y="${yy + 9 + lh*(i + .72)}" text-anchor="${o.left ? 'start' : 'middle'}" font-size="${o.fs || fs}" font-weight="${(o.boldFirst && i === 0) || o.bold ? 700 : 400}" fill="${C.text}">${esc2(l)}</text>`));
+    return h; };
+  const arrow = (x1, y1, x2, y2) => parts.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${C.line}" stroke-width="1.4" marker-end="url(#flow-arr)"/>`);
+  // 1. estratégia de busca
+  const sLines = ['Estratégia de busca', ...flowWrap(D.query || 'String de busca não informada (preencha no Roteiro de busca ou no campo acima)', 108, 7)];
+  const meta = [D.date ? 'Data da busca: ' + D.date : '', D.filters ? 'Filtros: ' + D.filters : ''].filter(Boolean).join(' · '); if(meta) sLines.push(...flowWrap(meta, 108, 3));
+  let h = box(40, y, W - 80, sLines, C.search, {left: true, boldFirst: true}); const y1 = y + h; y = y1 + 34;
+  // 2. bases
+  const nb = D.bases.length, bw = Math.min(210, (W - 80 - (nb - 1)*18)/nb), tot = nb*bw + (nb - 1)*18, x0 = cx - tot/2; let bh = 0;
+  D.bases.forEach((b, i) => { const x = x0 + i*(bw + 18); arrow(Math.max(60, Math.min(W - 60, x + bw/2)), y1, x + bw/2, y - 2); bh = Math.max(bh, box(x, y, bw, [...flowWrap(b.name, Math.floor(bw/8), 2), 'N = ' + fmt(b.n)], C.base, {boldFirst: true})); });
+  const y2 = y + bh; y = y2 + 36;
+  // 3. identificados
+  D.bases.forEach((b, i) => arrow(x0 + i*(bw + 18) + bw/2, y2, cx, y - 2));
+  const mw = 300, mx = cx - mw/2;
+  h = box(mx, y, mw, ['Registros identificados', 'N = ' + fmt(D.identified)], C.id, {boldFirst: true}); let yPrev = y + h;
+  // duplicados (à direita)
+  const sw = 270, sx = W - 40 - sw, dupLines = ['Registros duplicados removidos', 'N = ' + fmt(D.dup), 'mesmo DOI ou mesmo título e ano'];
+  const dy = yPrev + 14; box(sx, dy, sw, dupLines, C.dup, {boldFirst: true, fs: 13}); arrow(cx, dy + 34, sx - 2, dy + 34);
+  y = dy + dupLines.length*lh + 18 + 16;
+  // 4. únicos
+  arrow(cx, yPrev, cx, y - 2);
+  h = box(mx, y, mw, ['Documentos únicos no corpus', 'N = ' + fmt(D.unique)], C.uniq, {boldFirst: true}); yPrev = y + h;
+  // padronização (à esquerda)
+  if(D.rules){ const ry = y; box(40, ry, 250, ['Padronização de nomes e termos', fmt(D.rules) + ' correções aplicadas'], C.rule, {boldFirst: true, fs: 13}); parts.push(`<line x1="${40 + 250}" y1="${ry + 28}" x2="${mx}" y2="${ry + 28}" stroke="${C.line}" stroke-width="1.2" stroke-dasharray="4 3"/>`); }
+  // exclusões posteriores (à direita)
+  if(D.excl.length){ let ey = yPrev + 14; const exL = ['Excluídos após a triagem', 'N = ' + fmt(D.exN), ...D.excl.flatMap(e => flowWrap(e.label + ' (N = ' + fmt(e.n) + ')', 34, 2))];
+    box(sx, ey, sw, exL, C.excl, {boldFirst: true, fs: 13}); arrow(cx, ey + 34, sx - 2, ey + 34); y = ey + exL.length*lh + 18 + 16; }
+  else y = yPrev + 34;
+  // 5. incluídos
+  arrow(cx, yPrev, cx, y - 2);
+  h = box(cx - 170, y, 340, ['Incluídos na análise bibliométrica', 'N = ' + fmt(D.included) + (D.period ? ' · ' + D.period : '')], C.inc, {bold: true}); yPrev = y + h; y = yPrev + 34;
+  // 6. análises
+  arrow(cx, yPrev, cx, y - 2);
+  const an = ['Análises realizadas', ...flowWrap('Produção anual e tendência do tema (modelos de regressão); leis de Lotka, Bradford e Zipf; autores, periódicos, países, instituições e palavras-chave; evolução no tempo; redes de cooperação e coocorrência; mapa de produção.', 108, 4)];
+  h = box(40, y, W - 80, an, C.an, {left: true, boldFirst: true}); y += h + 16;
+  host.innerHTML = `<svg id="flowsvg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${y}" font-family="Inter, system-ui, Arial, sans-serif" style="width:100%;height:auto;max-width:${W}px;display:block;margin:0 auto"><defs><marker id="flow-arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="${C.line}"/></marker></defs><rect width="${W}" height="${y}" fill="#fff"/>${parts.join('')}</svg>`;
+}
+function flowEdit(){
+  const P = flowPrefs(); P.query = document.getElementById('flow-query').value; P.excl = document.getElementById('flow-excl').value; P.gray = document.getElementById('flow-gray').checked;
+  flowSavePrefs(P); renderFlow();
+}
+function flowPNG(){ const svg = document.getElementById('flowsvg'); if(!svg){ toast('Nada para baixar'); return; } svgToPng(svg, `${projSlug()}-fluxograma.png`, 3); }
+
 /* ---------- explicações (botão ?) com texto pronto para copiar ---------- */
 function helpNetWords(type){
   return {author: {art: 'um', node: 'autor', nodes: 'autores', title: 'coautoria entre autores', link: 'assinaram juntos pelo menos um documento'},
@@ -2198,6 +2286,12 @@ function helpContent(key){
       c: 'Os limites de 50% do pico e de 5% ao ano são critérios desta Sala, escolhidos por serem simples e transparentes. Descreva-os no método se usar o resultado. Séries curtas ou com poucos documentos por ano dão ajustes instáveis. Um R² alto descreve o passado e não garante o futuro. O ano corrente é excluído por estar incompleto.'};
     if(!X || !X.ok) return Object.assign(base, {p: 'O corpus não tem anos completos suficientes para ajustar os modelos de tendência (mínimo de 5).'});
     return Object.assign(base, {p: `A produção anual de ${X.y0} a ${X.y1} foi ajustada por mínimos quadrados a quatro modelos: linear, exponencial, logarítmico e polinomial de segundo grau. ${X.sel === X.best ? 'O melhor ajuste, pelo R² ajustado, foi o modelo' : 'Para a interpretação foi adotado o modelo'} ${X.sel.label.toLowerCase()} (R² = ${fmt2(X.sel.r2)}; R² ajustado = ${fmt2(X.sel.adj)}; p ${fmtP(X.sel.pval).startsWith('<') ? fmtP(X.sel.pval) : '= ' + fmtP(X.sel.pval)}, teste F da regressão)` + (X.sel.r2 < .5 ? '. O ajuste foi fraco, o que indica produção oscilante, sem tendência definida' : `, o que indica ${X.shape}`) + `. O pico de produção ocorreu em ${X.peakYear}, com ${fmt(X.peak)} documentos. Considerando os anos consecutivos com pelo menos 50% da produção do pico, o tema ` + (X.stillHot ? `está em alta desde ${X.hotFrom}` : `esteve em alta ${X.hotFrom === X.hotTo ? 'em ' + X.hotFrom : 'de ' + X.hotFrom + ' a ' + X.hotTo}`) + `. Nos últimos ${X.recentWindow} anos completos, a variação média foi de ${X.recentSlope >= 0 ? '+' : '-'}${fmt1(Math.abs(X.recentSlope))} documentos por ano, o que caracteriza ${X.recent === 'up' ? 'ascensão' : X.recent === 'down' ? 'declínio' : 'estabilidade'}.`}); }
+  if(key === 'flow'){ const D = flowData();
+    const base = {t: 'Fluxograma do método', o: 'Resume o caminho da busca até o corpus analisado: estratégia de busca, bases consultadas, registros identificados, duplicados removidos e documentos incluídos.',
+      l: 'Registros identificados é a soma do que foi lido em cada arquivo importado. Duplicados são registros com o mesmo DOI ou, na falta dele, o mesmo título e ano, dentro de uma base ou entre bases. Documentos únicos é o corpus em que todas as análises são feitas, como se fosse um único arquivo. O campo de exclusões serve para registrar a triagem feita fora da Sala, com o motivo e o número de documentos.',
+      c: 'As exclusões digitadas só aparecem no fluxograma: elas não retiram documentos do corpus. Se você excluiu documentos na triagem, importe na Sala os arquivos já filtrados para que as análises correspondam ao número final. A string de busca pode ter sintaxe diferente em cada base. Registre no método as variações.'};
+    if(!D) return Object.assign(base, {p: 'O fluxograma precisa dos resultados recalculados na versão atual da Sala.'});
+    return Object.assign(base, {p: `A busca foi realizada ${D.bases.length > 1 ? 'nas bases' : 'na base'} ${D.bases.map(b => b.name).join(', ').replace(/, ([^,]*)$/, ' e $1')}` + (D.date ? `, em ${D.date}` : '') + (D.query ? `, com a seguinte estratégia: ${D.query}.` : '.') + (D.filters ? ` Filtros aplicados: ${D.filters}.` : '') + ` Foram identificados ${fmt(D.identified)} registros (${D.bases.map(b => b.name + ': ' + fmt(b.n)).join('; ')}). Após a remoção de ${fmt(D.dup)} registros duplicados, identificados pelo mesmo DOI ou pelo mesmo título e ano, restaram ${fmt(D.unique)} documentos únicos.` + (D.rules ? ` Nomes de autores, periódicos e termos foram padronizados (${fmt(D.rules)} correções).` : '') + (D.excl.length ? ` Na triagem foram excluídos ${fmt(D.exN)} documentos (${D.excl.map(e => e.label + ': ' + fmt(e.n)).join('; ')}).` : '') + ` Ao final, ${fmt(D.included)} documentos foram incluídos na análise bibliométrica.`}); }
   if(key === 'bases'){ const B = R.bases;
     const base = {t: 'Bases de dados do corpus', o: 'Mostra quantos documentos do corpus integrado vieram de cada base e quantos aparecem em mais de uma.',
       l: 'A parte "Só nesta base" são documentos que nenhuma outra base trouxe: é o ganho real de incluir aquela base. A parte "Também em outra base" é a sobreposição. Documentos repetidos são identificados pelo mesmo DOI ou, na falta dele, pelo mesmo título e ano, e contam uma única vez em todas as análises. Quando o mesmo documento vem de duas bases, a Sala mantém um registro e completa os campos vazios com os dados da outra.',
@@ -2280,6 +2374,7 @@ function helpButtons(){
   const byCanvas = {'ch-temporal': 'temporal', 'ch-trend': 'trend', 'ch-evo': 'evo', 'ch-bases': 'bases', 'ch-autores': 'autores', 'ch-journals': 'journals', 'ch-paises': 'paises', 'ch-kw': 'kw', 'ch-areas': 'areas', 'ch-lotka': 'lotka', 'ch-bradford': 'bradford', 'ch-zipf': 'zipf'};
   Object.entries(byCanvas).forEach(([id, key]) => add(document.getElementById(id)?.closest('.card')?.querySelector('.charthead h3'), key));
   add(document.getElementById('k-geral')?.closest('.card')?.querySelector('h3'), 'geral');
+  add(document.querySelector('#flow-card .charthead h3'), 'flow');
   add(document.querySelector('#net-body .card > h3'), 'net');
   add(document.querySelector('#tab-mapa .card > h3'), 'map');
 }
@@ -2297,6 +2392,7 @@ function renderAll(){
   const peak = [...T].sort((a,b) => b[1]-a[1])[0] || null;
   $('#i-temporal').innerHTML = `Produção de <b>${fmt(S.documents)} documentos</b>` + (peak ? ` entre ${S.yearMin} e ${S.yearMax}, com pico de ${fmt(peak[1])} em ${peak[0]}. ` : ', sem ano de publicação identificado. ') + (S.growth == null ? 'Série curta demais para estimar taxa de crescimento.' : `Taxa composta de crescimento anual de <b>${fmt1(S.growth)}%</b> entre o primeiro e o último ano completo` + (S.doubling ? `, o que corresponde a um tempo de duplicação de ${fmt1(S.doubling)} anos.` : '.'));
 
+  try{ renderFlow(); }catch(e){ console.warn('Fluxograma:', e); }
   try{ renderBasesChart(); }catch(e){ console.warn('Bases:', e); }
   try{ renderTrend(); }catch(e){ console.warn('Tendência do tema:', e); }
   try{ renderEvolution(); }catch(e){ console.warn('Evolução no tempo:', e); }
@@ -2775,6 +2871,7 @@ function reportHTML(){
 <h1>${esc(P.title || 'Relatório bibliométrico')}</h1>
 <p>Relatório gerado em ${new Date().toLocaleString('pt-BR')} pela Sala de Análise Bibliométrica (v${APP_VERSION}). Base: ${esc(P.base ? BASES[P.base].title : R.format)}. Arquivo: ${esc(P.file?.name || '')} (${fmt(S.documents)} registros).</p>
 <h2>Protocolo</h2>${tbl(['Campo','Valor'], [['String de busca', pr.query || ''],['Data da busca', pr.date || ''],['Registros retornados', pr.n ?? ''],['Filtros', pr.filters || ''],['Observações', pr.notes || '']])}
+${document.getElementById('flowsvg') ? '<h2>Fluxograma do método</h2>' + document.getElementById('flowsvg').outerHTML : ''}
 <h2>Visão geral</h2>${[[fmt(S.documents),'documentos'],[S.yearMin == null ? 'sem ano' : `${S.yearMin}–${S.yearMax}`,'período'],[fmt(S.authors),'autores'],[fmt(S.journals),'periódicos'],[fmt(S.countries),'países'],[fmt(S.totalCitations),'citações'],[fmt1(S.citPerDoc),'citações/doc'],[fmt2(S.collabIndex),'autores/doc'],[S.growth == null ? '–' : fmt1(S.growth)+'%','crescimento anual']].map(([v,l]) => `<div class="kp"><b>${v}</b><span>${l}</span></div>`).join('')}
 <h2>Produção anual</h2>${img('ch-temporal')}<p class="i">${$('#i-temporal').textContent}</p>
 ${CHARTS['ch-trend'] ? '<h2>Tendência do tema</h2>' + img('ch-trend') + '<p class="i">' + $('#i-trend').textContent + '</p>' : ''}
