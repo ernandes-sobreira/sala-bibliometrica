@@ -28,6 +28,15 @@ html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,"Se
   }
   if(!src){document.getElementById('boot').innerHTML='<div class="box err"><b>Não foi possível carregar a aplicação.</b><br>'+last+'</div>';return;}
 
+  // Mantém a Sala focada apenas na análise bibliométrica/quantitativa.
+  // Remove da versão-base a navegação, a seção e o carregamento do módulo qualitativo.
+  src=src.replace(/\s*<button data-tab="qualitativo"[\s\S]*?<\/button>/,'');
+  src=src.replace(/\s*<!-- QUALITATIVO -->\s*<section id="tab-qualitativo"[\s\S]*?<\/section>/,'');
+  src=src.replace(/--c-qual:[^;]+;/,'');
+  src=src.replace(/\s*const URL_QUALI\s*=\s*["'][^"']+["'];?/,'');
+  src=src.replace(", qualitativo:'Pesquisa qualitativa'","");
+  src=src.replace(/\n\s*if\(t === 'qualitativo'[^\n]*URL_QUALI;?/,'');
+  
   const needle='document.open();document.write(html);document.close();';
   const replacement=`try{\n    const editorPatch=await fetchText('./editor-patch.js?v=20261001g',5000);\n    const repairPatch=await fetchText('./editor-fix.js?v=20261001b',5000);\n    const metaPatch=await fetchText('./scielo-meta-v2.js?v=20261001a',5000);\n    const marker='/* ---------- importação e parser ---------- */';\n    if(editorPatch&&repairPatch&&html.includes(marker)){\n      new Function(editorPatch); new Function(repairPatch);\n      html=html.replace(marker,editorPatch+'\\n'+repairPatch+'\\n'+marker);\n    }\n    if(metaPatch&&html.includes('async function handleFile(file){')){\n      new Function(metaPatch);\n      html=html.replace('async function handleFile(file){',metaPatch+'\\nasync function handleFile(file){');\n    }\n  }catch(e){console.warn('Editor/reparo/metadados não carregados:',e);}\n  document.open();document.write(html);document.close();`;
   if(!src.includes(needle)){document.getElementById('boot').innerHTML='<div class="box err"><b>Não foi possível acoplar as extensões.</b><br>A versão-base mudou; nenhum dado foi alterado.</div>';return;}
