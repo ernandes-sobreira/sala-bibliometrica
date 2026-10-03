@@ -437,6 +437,24 @@ table.t th.n{text-align:right}
           <div class="tscroll" style="margin-top:12px"><table class="t" id="t-trend"></table></div>
           <div class="interp" id="i-trend"></div>
         </div>
+        <div class="card">
+          <div class="charthead"><h3>Evolução no tempo</h3><button class="btn sm" onclick="dlChart('ch-evo','evolucao-no-tempo')">Baixar PNG</button></div>
+          <div class="lead">Mostra quando cada item surge no tema, quando concentra as ocorrências e quando deixa de aparecer.</div>
+          <div class="ctrls">
+            <div class="field"><label>O que acompanhar</label><select id="evo-field" onchange="renderEvolution()"><option value="keywords">Palavras-chave</option><option value="kwplus">Keywords Plus</option><option value="authors">Autores</option><option value="journal">Periódicos</option><option value="countries">Países</option><option value="institutions">Instituições</option><option value="funding">Agências de fomento</option></select></div>
+            <div class="field"><label>Quantos itens</label><select id="evo-n" onchange="renderEvolution()"><option value="15">15</option><option value="25" selected>25</option><option value="40">40</option><option value="60">60</option></select></div>
+            <div class="field"><label>Mínimo de ocorrências</label><input id="evo-min" type="number" value="2" min="1" onchange="renderEvolution()"></div>
+            <div class="field"><label>Ordenar por</label><select id="evo-sort" onchange="renderEvolution()"><option value="med">Ano mediano</option><option value="first">Primeiro ano</option><option value="last">Último ano</option><option value="freq">Ocorrências</option></select></div>
+          </div>
+          <div class="chartbox" style="height:0"><canvas id="ch-evo"></canvas></div>
+          <div class="interp" id="i-evo"></div>
+          <div class="tscroll" style="max-height:320px;margin-top:12px"><table class="t" id="t-evo"></table></div>
+        </div>
+        <div class="card">
+          <h3>Principais nomes do tema, com links</h3>
+          <div class="lead">Autores, periódicos e documentos de maior destaque no corpus, com atalhos para conferir cada um.</div>
+          <div id="links-body"></div>
+        </div>
         <div class="grid2">
           <div class="card"><div class="charthead"><h3>Autores mais produtivos</h3><button class="btn sm" onclick="dlChart('ch-autores','autores')">PNG</button></div><div class="chartbox tall"><canvas id="ch-autores"></canvas></div></div>
           <div class="card"><div class="charthead"><h3>Periódicos com mais artigos</h3><button class="btn sm" onclick="dlChart('ch-journals','periodicos')">PNG</button></div><div class="chartbox tall"><canvas id="ch-journals"></canvas></div></div>
@@ -579,7 +597,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "1.5.0";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -853,7 +871,7 @@ async function saveProtocol(){
 const ED_FIELDS={
   authors:{label:'Autores',array:true},journal:{label:'Periódicos',array:false},keywords:{label:'Palavras-chave',array:true},
   kwplus:{label:'Keywords Plus',array:true},countries:{label:'Países',array:true},institutions:{label:'Instituições',array:true},
-  area:{label:'Áreas de pesquisa',array:true},lang:{label:'Idiomas',array:false},doctype:{label:'Tipos de documento',array:false}
+  area:{label:'Áreas de pesquisa',array:true},funding:{label:'Agências de fomento',array:true},lang:{label:'Idiomas',array:false},doctype:{label:'Tipos de documento',array:false}
 };
 let ED_BASE=null,ED_BASE_KEY='',ED_RAW_COMPUTE=null,ED_RAW_RENDER_CORPUS=null,ED_RAW_BUILD=null,ED_RAW_RENDER_ALL=null,ED_INSTALLED=false;
 
@@ -1400,6 +1418,7 @@ function buildCorpus(rows){
     o.title = String(o.title || '').trim();
     o.countries = extractCountries(o.affil, o.addresses);
     o.institutions = extractInstitutions(o.affil, o.addresses);
+    o.funding = extractFunding(r);
     return o;
   }).filter(o => o.title || o.authors.length);
   const dd = dedupeRecords(records);
@@ -1545,7 +1564,7 @@ function computeAll(){
   RESULTS = {
     version: APP_VERSION, computedAt: new Date().toISOString(), format: CORPUS.format,
     summary: {documents: N, yearMin: y0, yearMax: y1, authors: A, journals: journals.length, keywords: keywords.length, countries: countries.length, institutions: institutions.length, totalCitations: totalCit, citPerDoc: N ? totalCit/N : 0, collabIndex: collab, singleAuthored: single, growth, doubling, scp, mcp, withCountry: withC.length, docsPerAuthor: A ? N/A : 0},
-    temporal: perYear, authors: authors.slice(0, 100), journals: journals.slice(0, 100), keywords: keywords.slice(0, 150), kwplus: kwplus.slice(0, 100), areas: areas.slice(0, 60), countries: countries.slice(0, 120), institutions: institutions.slice(0, 100), doctypes: doctypes.slice(0, 20), langs: langs.slice(0, 20), cited, lotka, bradford, zipf, nets
+    temporal: perYear, authors: authors.slice(0, 100), journals: journals.slice(0, 100), keywords: keywords.slice(0, 150), kwplus: kwplus.slice(0, 100), areas: areas.slice(0, 60), countries: countries.slice(0, 120), institutions: institutions.slice(0, 100), doctypes: doctypes.slice(0, 20), langs: langs.slice(0, 20), cited, lotka, bradford, zipf, nets, evolution: computeEvolution(R)
   };
 }
 function buildNet(lists, maxNodes){
@@ -1619,7 +1638,7 @@ function mkChart(id, type, data, opts){
 }
 
 function figSnapshot(c){
-  const sc = c.options.scales || {}, b = {colors: [], titles: {}, grid: {}, tick: {}, legend: !!c.options.plugins?.legend?.display, height: ''};
+  const sc = c.options.scales || {}, b = {colors: [], titles: {}, grid: {}, tick: {}, legend: !!c.options.plugins?.legend?.display, height: (c.canvas.parentNode && c.canvas.parentNode.style.height) || ''};
   c.data.datasets.forEach(d => b.colors.push({bg: d.backgroundColor, bd: d.borderColor, bw: d.borderWidth, dash: d.borderDash, line: (d.type || c.config.type) === 'line'}));
   Object.keys(sc).forEach(k => {
     b.titles[k] = sc[k].title?.text || '';
@@ -1933,6 +1952,78 @@ function renderTrend(){
     (R.small ? ' Atenção: o pico tem menos de 5 documentos por ano, então qualquer tendência deve ser lida com cautela.' : '') + (R.dropped ? ' O ano corrente foi excluído por estar incompleto.' : '');
 }
 
+/* ---------- evolução no tempo: quando cada termo, autor, país ou agência surge e deixa de aparecer ---------- */
+const EVO_FIELDS = {keywords: 'Palavras-chave', kwplus: 'Keywords Plus', authors: 'Autores', journal: 'Periódicos', countries: 'Países', institutions: 'Instituições', funding: 'Agências de fomento'};
+function extractFunding(r){
+  const raw = r['Funding Orgs'] || r['FU'] || r['Funding Details'] || r['Funding Agency'] || r['Funding Sponsor'] || '';
+  return [...new Set(String(raw).split(';').map(x => x.replace(/\[[^\]]*\]/g, '').split(':')[0].replace(/\s+/g, ' ').trim()).filter(x => x.length > 2 && x.length < 120 && !/^\d/.test(x)))];
+}
+function evoQuant(a, q){ const p = (a.length-1)*q, lo = Math.floor(p), hi = Math.ceil(p); return a[lo] + (a[hi]-a[lo])*(p-lo); }
+function computeEvolution(R){
+  const get = {keywords: r => r.keywords, kwplus: r => r.kwplus, authors: r => r.authors, journal: r => r.journal ? [r.journal] : [], countries: r => r.countries, institutions: r => r.institutions, funding: r => r.funding};
+  const out = {};
+  for(const k of Object.keys(EVO_FIELDS)){
+    const m = new Map();
+    R.forEach(r => { if(!(r.year > 1800)) return; [...new Set(get[k](r) || [])].forEach(v => { v = String(v || '').trim(); if(!v) return; let a = m.get(v); if(!a){ a = []; m.set(v, a); } a.push(r.year); }); });
+    // [nome, ocorrências, primeiro ano, 1º quartil, mediana, 3º quartil, último ano]
+    out[k] = [...m.entries()].sort((a,b) => b[1].length - a[1].length).slice(0, 80).map(([name, ys]) => { ys.sort((a,b) => a-b); return [name, ys.length, ys[0], +evoQuant(ys, .25).toFixed(1), +evoQuant(ys, .5).toFixed(1), +evoQuant(ys, .75).toFixed(1), ys[ys.length-1]]; });
+  }
+  return out;
+}
+let EVO_CUR = null;
+function renderEvolution(){
+  const cv = document.getElementById('ch-evo'); if(!cv || !RESULTS) return;
+  const E = RESULTS.evolution, info = document.getElementById('i-evo'), box = cv.parentNode;
+  const clear = msg => { if(CHARTS['ch-evo']){ CHARTS['ch-evo'].destroy(); delete CHARTS['ch-evo']; } box.style.height = '0px'; document.getElementById('t-evo').innerHTML = ''; info.innerHTML = msg; EVO_CUR = null; };
+  if(!E) return clear('Esta análise precisa dos resultados recalculados na versão atual da Sala. Use o botão Recalcular agora, no alto desta aba.');
+  const field = document.getElementById('evo-field').value, nMax = +document.getElementById('evo-n').value || 25, min = Math.max(1, +document.getElementById('evo-min').value || 1), sort = document.getElementById('evo-sort').value;
+  let rows = (E[field] || []).filter(x => x[1] >= min).slice(0, nMax);
+  const name = EVO_FIELDS[field].toLowerCase();
+  if(!rows.length) return clear(`Não há ${name} com pelo menos ${min} ocorrência(s) e ano identificado neste corpus.` + (field === 'funding' ? ' As agências de fomento só existem em exportações que trazem esse campo (Web of Science e Scopus com dados de financiamento).' : ''));
+  const key = {med: 4, first: 2, last: 6}[sort];
+  rows = [...rows].sort(sort === 'freq' ? (a,b) => b[1]-a[1] : (a,b) => b[key]-a[key] || b[6]-a[6] || b[1]-a[1]);
+  const S = RESULTS.summary, y0 = Math.min(...rows.map(x => x[2])), y1 = Math.max(...rows.map(x => x[6])), maxF = Math.max(...rows.map(x => x[1]));
+  const seen = new Map(), labels = rows.map(x => { let l = cut(String(x[0]), 40); const k = seen.get(l) || 0; seen.set(l, k+1); return k ? l + ' (' + (k+1) + ')' : l; });
+  box.style.height = Math.max(280, rows.length*22 + 110) + 'px';
+  EVO_CUR = {field, rows, labels};
+  mkChart('ch-evo', 'bar', {labels, datasets: [
+    {type: 'bubble', figKey: 'median', label: 'Ano mediano (tamanho = número de ocorrências)', data: rows.map((x,i) => ({x: x[4], y: labels[i], r: 3 + 8*Math.sqrt(x[1]/maxF)})), backgroundColor: PAL[0], borderColor: '#fff', borderWidth: 1, order: 1},
+    {type: 'bar', figKey: 'iqr', label: 'Metade central das ocorrências (1º ao 3º quartil)', data: rows.map(x => [x[3], x[5]]), backgroundColor: '#7fb2d6', barThickness: 6, borderRadius: 3, grouped: false, order: 2},
+    {type: 'bar', figKey: 'span', label: 'Do primeiro ao último ano', data: rows.map(x => [x[2], x[6]]), backgroundColor: '#b9c4cf', barThickness: 2, grouped: false, order: 3}]},
+    {indexAxis: 'y', plugins: {legend: {display: true, position: 'bottom'}, tooltip: {callbacks: {title: c => rows[c[0].dataIndex][0], label: c => { const x = rows[c.dataIndex]; return `${x[1]} ocorrências, de ${x[2]} a ${x[6]}, ano mediano ${Math.round(x[4])}`; }}}},
+     scales: {x: Object.assign({type: 'linear', min: y0 - .6, max: y1 + .6, title: {display: true, text: 'Ano'}}, AX, {ticks: {color: '#1a2332', precision: 0, callback: v => Number.isInteger(v) ? String(v) : ''}}), y: Object.assign({}, AX, {grid: {color: '#f1f3f6'}, ticks: {color: '#1a2332', font: {size: 11.5}, autoSkip: false}})}});
+  table('t-evo', ['#', EVO_FIELDS[field], {t: 'Ocorrências', n: 1}, {t: 'Primeiro ano', n: 1}, {t: 'Ano mediano', n: 1}, {t: 'Último ano', n: 1}], rows.map((x,i) => [i+1, esc(cut(String(x[0]), 70)), fmt(x[1]), x[2], Math.round(x[4]), x[6]]));
+  // leitura: quem entrou há pouco e quem deixou de aparecer
+  const last = S.yearMax, all = (E[field] || []).filter(x => x[1] >= min), list = a => a.slice(0, 6).map(x => `${esc(x[0])} (${x[2] === x[6] ? x[2] : x[2] + ' a ' + x[6]})`).join(', ');
+  const fresh = all.filter(x => x[2] >= last - 4).sort((a,b) => b[1]-a[1]), gone = all.filter(x => x[6] <= last - 4).sort((a,b) => b[1]-a[1]), lasting = all.filter(x => x[6] - x[2] >= 9 && x[6] >= last - 1).sort((a,b) => (b[6]-b[2]) - (a[6]-a[2]) || b[1]-a[1]);
+  const fem = ['keywords','kwplus','institutions','funding'].includes(field);
+  info.innerHTML = `Entre ${fem ? 'as' : 'os'} ${fmt(all.length)} ${name} mais frequentes com pelo menos ${min} ocorrência(s): ` +
+    (fresh.length ? `<b>entraram no tema nos últimos 5 anos</b> (desde ${last - 4}): ${list(fresh)}. ` : 'nenhum item entrou no tema nos últimos 5 anos. ') +
+    (gone.length ? `<b>Não aparecem há 4 anos ou mais</b> (última ocorrência até ${last - 4}): ${list(gone)}. ` : 'Nenhum item deixou de aparecer nos últimos 4 anos. ') +
+    (lasting.length ? `<b>Presença mais longa e ainda ativa</b>: ${list(lasting)}.` : '');
+}
+
+/* ---------- principais nomes do tema, com links ---------- */
+function linkScholarAuthor(n){ return 'https://scholar.google.com/citations?view_op=search_authors&mauthors=' + encodeURIComponent(String(n).replace(/,/g, ' ').replace(/\s+/g, ' ').trim()); }
+function linkOrcid(n){ return 'https://orcid.org/orcid-search/search?searchQuery=' + encodeURIComponent(String(n).replace(/,/g, ' ').replace(/\s+/g, ' ').trim()); }
+function linkScholarTitle(t){ return 'https://scholar.google.com/scholar?q=' + encodeURIComponent('"' + String(t).trim() + '"'); }
+function linkScimago(j){ return 'https://www.scimagojr.com/journalsearch.php?q=' + encodeURIComponent(String(j).trim()); }
+function linkWeb(q){ return 'https://www.google.com/search?q=' + encodeURIComponent(q); }
+function renderLinks(){
+  const host = document.getElementById('links-body'); if(!host || !RESULTS) return;
+  const R = RESULTS, a = lnk => `target="_blank" rel="noopener" href="${esc(lnk)}"`;
+  const span = new Map(((R.evolution || {}).authors || []).map(x => [x[0], x]));
+  const A = (R.authors || []).slice(0, 10), J = (R.journals || []).slice(0, 10), C = (R.cited || []).slice(0, 10);
+  if(!A.length){ host.innerHTML = '<span class="small muted">Sem autores no corpus.</span>'; return; }
+  const top = A[0], ts = span.get(top[0]);
+  const tbl = (head, rows) => `<div class="tscroll" style="max-height:340px"><table class="t"><thead><tr>${head.map(h => `<th class="${h.n ? 'n' : ''}">${h.t || h}</th>`).join('')}</tr></thead><tbody>${rows.map(r => '<tr>' + r.map((c,i) => `<td class="${head[i].n ? 'n' : ''}">${c}</td>`).join('') + '</tr>').join('')}</tbody></table></div>`;
+  host.innerHTML = `<div class="msg info" style="margin-bottom:14px"><b>Autor com mais documentos no tema:</b> ${esc(top[0])}, com ${fmt(top[1])} documento(s)` + (ts ? `, entre ${ts[2]} e ${ts[6]}` : '') + `. <a ${a(linkScholarAuthor(top[0]))}>Buscar no Google Acadêmico</a> · <a ${a(linkOrcid(top[0]))}>Buscar no ORCID</a></div>` +
+    `<div class="grid2" style="align-items:start"><div><h3 style="font-size:15px;margin-bottom:6px">Autores</h3>${tbl(['Autor', {t: 'Docs', n: 1}, 'Período', 'Links'], A.map(x => { const s = span.get(x[0]); return [esc(cut(x[0], 38)), fmt(x[1]), s ? (s[2] === s[6] ? s[2] : s[2] + '–' + s[6]) : '–', `<a ${a(linkScholarAuthor(x[0]))}>Acadêmico</a> · <a ${a(linkOrcid(x[0]))}>ORCID</a>`]; }))}</div>` +
+    `<div><h3 style="font-size:15px;margin-bottom:6px">Periódicos</h3>${tbl(['Periódico', {t: 'Docs', n: 1}, 'Links'], J.map(x => [esc(cut(x[0], 44)), fmt(x[1]), `<a ${a(linkScimago(x[0]))}>SCImago</a> · <a ${a(linkWeb('"' + x[0] + '" journal'))}>Site</a>`]))}</div></div>` +
+    `<h3 style="font-size:15px;margin:16px 0 6px">Documentos mais citados</h3>${tbl(['Título', 'Ano', {t: 'Citações', n: 1}, 'Links'], C.map(d => [esc(cut(d.title || '', 110)), d.year || '–', fmt(d.citations), (d.doi ? `<a ${a('https://doi.org/' + d.doi)}>DOI</a> · ` : '') + `<a ${a(linkScholarTitle(d.title || ''))}>Acadêmico</a>`]))}` +
+    `<div class="small muted" style="margin-top:10px">Os links de autores e periódicos abrem uma busca pelo nome. A Sala não sabe qual perfil é o da pessoa: confira a identidade antes de usar, porque nomes abreviados podem corresponder a várias pessoas. O link DOI leva direto ao documento.</div>`;
+}
+
 /* ---------- explicações (botão ?) com texto pronto para copiar ---------- */
 function helpNetWords(type){
   return {author: {art: 'um', node: 'autor', nodes: 'autores', title: 'coautoria entre autores', link: 'assinaram juntos pelo menos um documento'},
@@ -1955,6 +2046,13 @@ function helpContent(key){
       c: 'Os limites de 50% do pico e de 5% ao ano são critérios desta Sala, escolhidos por serem simples e transparentes. Descreva-os no método se usar o resultado. Séries curtas ou com poucos documentos por ano dão ajustes instáveis. Um R² alto descreve o passado e não garante o futuro. O ano corrente é excluído por estar incompleto.'};
     if(!X || !X.ok) return Object.assign(base, {p: 'O corpus não tem anos completos suficientes para ajustar os modelos de tendência (mínimo de 5).'});
     return Object.assign(base, {p: `A produção anual de ${X.y0} a ${X.y1} foi ajustada por mínimos quadrados a quatro modelos: linear, exponencial, logarítmico e polinomial de segundo grau. ${X.sel === X.best ? 'O melhor ajuste, pelo R² ajustado, foi o modelo' : 'Para a interpretação foi adotado o modelo'} ${X.sel.label.toLowerCase()} (R² = ${fmt2(X.sel.r2)}; R² ajustado = ${fmt2(X.sel.adj)}; p ${fmtP(X.sel.pval).startsWith('<') ? fmtP(X.sel.pval) : '= ' + fmtP(X.sel.pval)}, teste F da regressão)` + (X.sel.r2 < .5 ? '. O ajuste foi fraco, o que indica produção oscilante, sem tendência definida' : `, o que indica ${X.shape}`) + `. O pico de produção ocorreu em ${X.peakYear}, com ${fmt(X.peak)} documentos. Considerando os anos consecutivos com pelo menos 50% da produção do pico, o tema ` + (X.stillHot ? `está em alta desde ${X.hotFrom}` : `esteve em alta ${X.hotFrom === X.hotTo ? 'em ' + X.hotFrom : 'de ' + X.hotFrom + ' a ' + X.hotTo}`) + `. Nos últimos ${X.recentWindow} anos completos, a variação média foi de ${X.recentSlope >= 0 ? '+' : '-'}${fmt1(Math.abs(X.recentSlope))} documentos por ano, o que caracteriza ${X.recent === 'up' ? 'ascensão' : X.recent === 'down' ? 'declínio' : 'estabilidade'}.`}); }
+  if(key === 'evo'){ const X = EVO_CUR, nm = X ? EVO_FIELDS[X.field].toLowerCase() : 'itens';
+    const base = {t: 'Evolução no tempo', o: 'Para cada item (palavra-chave, autor, periódico, país, instituição ou agência de fomento), mostra em que anos ele aparece nos documentos do corpus.',
+      l: 'Linha fina: do primeiro ao último ano em que o item aparece. Barra grossa: os anos que concentram a metade central das ocorrências (do 1º ao 3º quartil). Ponto: ano mediano, com tamanho proporcional ao número de ocorrências. Itens no alto com linhas curtas à direita são recentes: indicam assuntos, autores ou países que estão entrando no tema. Linhas que terminam cedo indicam quem deixou de aparecer. Linhas longas indicam presença duradoura.',
+      c: 'Deixar de aparecer no corpus não prova que o autor parou de publicar ou que a agência parou de financiar: significa apenas que não há documentos recuperados pela sua busca depois daquele ano. Os anos mais recentes costumam estar incompletos nas bases. Agências de fomento só existem em exportações que trazem esse campo, e a cobertura é parcial. Nomes com grafias diferentes aparecem como itens separados até serem unidos em Corrigir nomes.'};
+    if(!X) return Object.assign(base, {p: 'Não há dados suficientes para esta análise com os filtros atuais.'});
+    const r = [...X.rows], newest = [...r].sort((a,b) => b[2]-a[2])[0], oldest = [...r].sort((a,b) => a[2]-b[2])[0], most = [...r].sort((a,b) => b[1]-a[1])[0];
+    return Object.assign(base, {t: 'Evolução no tempo: ' + nm, p: `A evolução temporal de ${nm} foi analisada pelos anos de ocorrência de cada item no corpus, resumidos pelo primeiro ano, pelo ano mediano, pelo intervalo entre o 1º e o 3º quartil e pelo último ano. Entre os ${fmt(r.length)} itens analisados, o mais frequente foi ${most[0]} (${fmt(most[1])} ocorrências, de ${most[2]} a ${most[6]}, ano mediano ${Math.round(most[4])}). O item presente há mais tempo foi ${oldest[0]} (desde ${oldest[2]}) e o de entrada mais recente foi ${newest[0]} (a partir de ${newest[2]}).`}); }
   if(key === 'autores') return {t: 'Autores mais produtivos', o: 'Ordena os autores pelo número de documentos do corpus em que aparecem.', l: 'Cada documento conta uma vez para cada um dos seus autores (contagem inteira). Um artigo com cinco autores soma um documento para cada um dos cinco.', c: 'A mesma pessoa pode aparecer com grafias diferentes, e pessoas diferentes podem ter o mesmo nome abreviado. Use o botão Corrigir nomes antes de interpretar. Produtividade não é o mesmo que impacto: veja também os documentos mais citados.',
     p: `Os autores com mais documentos no corpus foram ${top(R.authors, 5)}. A contagem considerou cada documento uma vez para cada autor (contagem inteira).`};
   if(key === 'journals') return {t: 'Periódicos com mais artigos', o: 'Ordena os periódicos pelo número de documentos do corpus que publicaram.', l: 'Os primeiros periódicos são os principais veículos do tema. Eles indicam onde ler e onde submeter.', c: 'O mesmo periódico pode aparecer com nome completo e abreviado. Use Corrigir nomes para unir. Volume de artigos não mede qualidade do periódico.',
@@ -2021,7 +2119,7 @@ function helpButtons(){
     b.addEventListener('click', ev => { ev.stopPropagation(); helpOpen(key); });
     h3.appendChild(b);
   };
-  const byCanvas = {'ch-temporal': 'temporal', 'ch-trend': 'trend', 'ch-autores': 'autores', 'ch-journals': 'journals', 'ch-paises': 'paises', 'ch-kw': 'kw', 'ch-areas': 'areas', 'ch-lotka': 'lotka', 'ch-bradford': 'bradford', 'ch-zipf': 'zipf'};
+  const byCanvas = {'ch-temporal': 'temporal', 'ch-trend': 'trend', 'ch-evo': 'evo', 'ch-autores': 'autores', 'ch-journals': 'journals', 'ch-paises': 'paises', 'ch-kw': 'kw', 'ch-areas': 'areas', 'ch-lotka': 'lotka', 'ch-bradford': 'bradford', 'ch-zipf': 'zipf'};
   Object.entries(byCanvas).forEach(([id, key]) => add(document.getElementById(id)?.closest('.card')?.querySelector('.charthead h3'), key));
   add(document.getElementById('k-geral')?.closest('.card')?.querySelector('h3'), 'geral');
   add(document.querySelector('#net-body .card > h3'), 'net');
@@ -2042,6 +2140,8 @@ function renderAll(){
   $('#i-temporal').innerHTML = `Produção de <b>${fmt(S.documents)} documentos</b>` + (peak ? ` entre ${S.yearMin} e ${S.yearMax}, com pico de ${fmt(peak[1])} em ${peak[0]}. ` : ', sem ano de publicação identificado. ') + (S.growth == null ? 'Série curta demais para estimar taxa de crescimento.' : `Taxa composta de crescimento anual de <b>${fmt1(S.growth)}%</b> entre o primeiro e o último ano completo` + (S.doubling ? `, o que corresponde a um tempo de duplicação de ${fmt1(S.doubling)} anos.` : '.'));
 
   try{ renderTrend(); }catch(e){ console.warn('Tendência do tema:', e); }
+  try{ renderEvolution(); }catch(e){ console.warn('Evolução no tempo:', e); }
+  try{ renderLinks(); }catch(e){ console.warn('Links:', e); }
   hbar('ch-autores', RESULTS.authors.slice(0, 20), 'Documentos', PAL[0]);
   hbar('ch-journals', RESULTS.journals.slice(0, 15), 'Documentos', PAL[2]);
   hbar('ch-paises', RESULTS.countries.slice(0, 20), 'Documentos (contagem inteira)', PAL[3]);
@@ -2049,7 +2149,7 @@ function renderAll(){
   table('t-inst', ['#','Instituição',{t:'Documentos',n:1}], RESULTS.institutions.slice(0, 30).map((x,i) => [i+1, esc(cut(x[0], 70)), fmt(x[1])]));
   hbar('ch-kw', RESULTS.keywords.slice(0, 25), 'Ocorrências', PAL[4]);
   hbar('ch-areas', RESULTS.areas.slice(0, 15), 'Documentos', PAL[5]);
-  table('t-cited', ['#','Autores','Ano','Título','Periódico',{t:'Citações',n:1}], RESULTS.cited.map((d,i) => [i+1, esc(d.authors), d.year||'–', d.doi ? `<a href="https://doi.org/${esc(d.doi)}" target="_blank" rel="noopener">${esc(cut(d.title, 100))}</a>` : esc(cut(d.title, 100)), esc(cut(d.journal, 40)), fmt(d.citations)]));
+  table('t-cited', ['#','Autores','Ano','Título','Periódico',{t:'Citações',n:1}], RESULTS.cited.map((d,i) => [i+1, esc(d.authors), d.year||'–', d.doi ? `<a href="https://doi.org/${esc(d.doi)}" target="_blank" rel="noopener">${esc(cut(d.title, 100))}</a>` : `<a href="${esc(linkScholarTitle(d.title))}" target="_blank" rel="noopener" title="Buscar no Google Acadêmico">${esc(cut(d.title, 100))}</a>`, esc(cut(d.journal, 40)), fmt(d.citations)]));
 
   /* Lotka */
   const L = RESULTS.lotka;
@@ -2486,6 +2586,7 @@ function allTables(){
   const R = RESULTS;
   return [
     ['producao-anual', [['Ano','Documentos'], ...R.temporal]],
+    ...(R.evolution ? Object.entries(R.evolution).filter(([k,v]) => v.length).map(([k,v]) => ['evolucao-' + k, [['Item','Ocorrências','Primeiro ano','1º quartil','Ano mediano','3º quartil','Último ano'], ...v]]) : []),
     ...(TREND_CUR && TREND_CUR.ok ? [['tendencia-modelos', [['Modelo','Equação','R2','R2 ajustado','p','Melhor ajuste'], ...TREND_CUR.models.map(m => [m.label, m.eq, m.r2.toFixed(4), m.adj.toFixed(4), isFinite(m.pval) ? m.pval.toExponential(3) : '', m === TREND_CUR.best ? 'sim' : ''])]]] : []),
     ['autores', [['Autor','Documentos'], ...R.authors]], ['periodicos', [['Periódico','Documentos'], ...R.journals]],
     ['palavras-chave', [['Palavra-chave','Ocorrências'], ...R.keywords]], ['keywords-plus', [['Keywords Plus','Ocorrências'], ...R.kwplus]],
