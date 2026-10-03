@@ -620,7 +620,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.7.0";
+const APP_VERSION = "1.7.1";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -1350,6 +1350,7 @@ async function enrichOneSciELO(rec){
   rec.institutions=[...new Set(inst.filter(Boolean))];
   rec.countries=[...new Set(countries.filter(Boolean))];
   rec.area=[...new Set([...(oa?.areas||[]),...(cr?.areas||[])].filter(Boolean))].slice(0,10);
+  rec.kwFromTitle=!(oa?.keywords?.length);
   rec.keywords=(oa?.keywords?.length?oa.keywords:scv2TitleTerms(rec.title));
   rec.citations=Math.max(Number(oa?.citations)||0,Number(cr?.citations)||0,Number(rec.citations)||0);
   rec.doi=oa?.doi||cr?.doi||rec.doi||'';
@@ -1514,7 +1515,9 @@ function extractInstitutions(affil, addresses){
 function mergeDup(a, b){   // completa o registro mantido com o que falta, a partir do duplicado
   const S = new Set([...(a.sources || []), ...(b.sources || [])]); if(S.size) a.sources = [...S];
   ['authors','area','countries','institutions','funding'].forEach(k => { if(!(a[k] || []).length && (b[k] || []).length) a[k] = b[k]; });
-  ['keywords','kwplus'].forEach(k => { a[k] = [...new Set([...(a[k] || []), ...(b[k] || [])])]; });
+  // termos tirados do título (SciELO sem palavras-chave) não se misturam com palavras-chave reais
+  if(a.kwFromTitle && !b.kwFromTitle && (b.keywords || []).length){ a.keywords = []; a.kwFromTitle = false; }
+  ['keywords','kwplus'].forEach(k => { if(k === 'keywords' && b.kwFromTitle && !a.kwFromTitle) return; a[k] = [...new Set([...(a[k] || []), ...(b[k] || [])])]; });
   ['journal','doi','doctype','lang','title'].forEach(k => { if(!a[k] && b[k]) a[k] = b[k]; });
   if(!a.year && b.year) a.year = b.year;
   if((b.citations || 0) > (a.citations || 0)) a.citations = b.citations;
@@ -1528,6 +1531,7 @@ function basesSummary(records){
 function mergeCorpora(prev, baseRecs, add){
   const dd = dedupeRecords([...baseRecs, ...add.records]);
   const names = [...new Set(dd.records.flatMap(r => r.sources || []))];
+  if(names.length > 1) dd.records.forEach(r => { if(r.kwFromTitle){ r.keywords = []; r.kwFromTitle = false; } });
   return {format: names.length > 1 ? 'Integrado (' + names.join(' + ') + ')' : (names[0] || prev.format), records: dd.records, columns: [...new Set([...(prev.columns || []), ...(add.columns || [])])],
     duplicates: (prev.duplicates || 0) + (add.duplicates || 0) + dd.removed, duplicateList: [...(prev.duplicateList || []), ...(add.duplicateList || []), ...dd.list].slice(0, 500), enrichment: prev.enrichment, integrated: true, flowFiles: [...(prev.flowFiles || []), ...(add.flowFiles || [])]};
 }
@@ -2295,7 +2299,7 @@ function helpContent(key){
   if(key === 'bases'){ const B = R.bases;
     const base = {t: 'Bases de dados do corpus', o: 'Mostra quantos documentos do corpus integrado vieram de cada base e quantos aparecem em mais de uma.',
       l: 'A parte "Só nesta base" são documentos que nenhuma outra base trouxe: é o ganho real de incluir aquela base. A parte "Também em outra base" é a sobreposição. Documentos repetidos são identificados pelo mesmo DOI ou, na falta dele, pelo mesmo título e ano, e contam uma única vez em todas as análises. Quando o mesmo documento vem de duas bases, a Sala mantém um registro e completa os campos vazios com os dados da outra.',
-      c: 'As bases descrevem os mesmos autores, periódicos e países com grafias diferentes. Antes de interpretar rankings e redes de um corpus integrado, use Editar nomes e termos e o botão Unir grafias equivalentes. As citações vêm de bases diferentes e não são diretamente comparáveis: a Sala guarda o maior valor. Palavras-chave e afiliações não existem em todas as bases, então a cobertura desses campos é parcial. Documentos sem DOI e com títulos escritos de forma diferente podem escapar da deduplicação.'};
+      c: 'As bases descrevem os mesmos autores, periódicos e países com grafias diferentes. Antes de interpretar rankings e redes de um corpus integrado, use Editar nomes e termos e o botão Unir grafias equivalentes. As citações vêm de bases diferentes e não são diretamente comparáveis: a Sala guarda o maior valor. Palavras-chave e afiliações não existem em todas as bases, então a cobertura desses campos é parcial. No corpus integrado, documentos que só existem na SciELO ficam sem palavras-chave quando o OpenAlex não as fornece: os termos do título não são misturados com palavras-chave reais. Documentos sem DOI e com títulos escritos de forma diferente podem escapar da deduplicação.'};
     if(!B || B.bases.length < 2) return Object.assign(base, {p: 'O corpus atual vem de uma única base.'});
     return Object.assign(base, {p: `O corpus integrou ${fmt(B.bases.length)} bases de dados (${B.bases.map(b => b.name).join(', ')}). Os registros duplicados entre bases foram identificados pelo DOI ou, na ausência dele, pelo título e ano, e unidos em um único registro. O corpus final reuniu ${fmt(B.total)} documentos únicos, dos quais ${fmt(B.multi)} (${fmt1(B.total ? B.multi/B.total*100 : 0)}%) estavam presentes em duas ou mais bases. ` + B.bases.map(b => `${b.name} contribuiu com ${fmt(b.total)} documentos, sendo ${fmt(b.exclusive)} exclusivos`).join('; ') + '.'}); }
   if(key === 'evo'){ const X = EVO_CUR, nm = X ? EVO_FIELDS[X.field].toLowerCase() : 'itens';
