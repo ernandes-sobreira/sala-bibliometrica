@@ -432,6 +432,7 @@ table.t th.n{text-align:right}
         <div class="card">
           <div class="charthead"><h3>Tendência do tema</h3><button class="btn sm" onclick="dlChart('ch-trend','tendencia')">Baixar PNG</button></div>
           <div class="kpis" id="k-trend"></div>
+          <div class="ctrls" id="trend-ctrls" style="margin:14px 0 4px;align-items:flex-start"></div>
           <div class="chartbox" style="margin-top:12px"><canvas id="ch-trend"></canvas></div>
           <div class="tscroll" style="margin-top:12px"><table class="t" id="t-trend"></table></div>
           <div class="interp" id="i-trend"></div>
@@ -578,7 +579,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.4.0";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -1426,7 +1427,7 @@ function isKnownCountry(name){
 function extractCountries(affil, addresses){
   const src = addresses || affil; if(!src) return [];
   const set = new Set();
-  String(src).split(';').forEach(block => {
+  String(src).replace(/\[[^\]]*\]/g, ' ').split(';').forEach(block => {
     block = block.replace(/^\s*\[.*?\]\s*/, '').trim(); if(!block) return;
     const parts = block.split(',');
     const c = normCountry(parts[parts.length - 1] || '');
@@ -1437,7 +1438,7 @@ function extractCountries(affil, addresses){
 function extractInstitutions(affil, addresses){
   const src = addresses || affil; if(!src) return [];
   const set = new Set();
-  String(src).split(';').forEach(block => {
+  String(src).replace(/\[[^\]]*\]/g, ' ').split(';').forEach(block => {
     block = block.replace(/^\s*\[.*?\]\s*/, '').trim();
     const inst = block.split(',')[0].trim();
     if(inst.length > 3 && inst.length < 90 && !/^\d/.test(inst)) set.add(inst.replace(/\s+/g, ' '));
@@ -1619,7 +1620,7 @@ function mkChart(id, type, data, opts){
 
 function figSnapshot(c){
   const sc = c.options.scales || {}, b = {colors: [], titles: {}, grid: {}, tick: {}, legend: !!c.options.plugins?.legend?.display, height: ''};
-  c.data.datasets.forEach(d => b.colors.push({bg: d.backgroundColor, bd: d.borderColor}));
+  c.data.datasets.forEach(d => b.colors.push({bg: d.backgroundColor, bd: d.borderColor, bw: d.borderWidth, dash: d.borderDash, line: (d.type || c.config.type) === 'line'}));
   Object.keys(sc).forEach(k => {
     b.titles[k] = sc[k].title?.text || '';
     b.grid[k] = sc[k].grid?.display !== false;
@@ -1632,12 +1633,17 @@ function figApply(id){
   const c = CHARTS[id]; if(!c || !c.$figBase) return;
   const b = c.$figBase, e = FIGED.edits[id] || {}, fsz = +e.font || 13;
   const single = c.data.datasets.length === 1 && c.config.type === 'bar';
+  const DASH = {solid: [], dash: [6, 4], dot: [2, 3]};
   c.data.datasets.forEach((d, i) => {
-    const col = e.colors && e.colors[i];
+    const key = d.figKey || i, col = e.colors && e.colors[key];
     let bg = col || b.colors[i].bg;
     if(single && e.pal && e.pal !== 'unica') bg = figPalette(e.pal, d.data.length) || bg;
     d.backgroundColor = bg;
     if(b.colors[i].bd !== undefined) d.borderColor = col || b.colors[i].bd;
+    if(b.colors[i].line){
+      d.borderWidth = e.widths && e.widths[key] != null ? +e.widths[key] : b.colors[i].bw;
+      d.borderDash = e.dashes && DASH[e.dashes[key]] ? DASH[e.dashes[key]] : b.colors[i].dash;
+    }
   });
   c.options.font = {size: fsz};
   Object.keys(c.options.scales || {}).forEach(k => {
@@ -1731,12 +1737,15 @@ function figOpen(id, name){
   const c = CHARTS[id]; if(!c){ toast('Gráfico não disponível'); return; }
   if(!c.$figBase) c.$figBase = figSnapshot(c);
   const b = c.$figBase, e = FIGED.edits[id] || {};
-  const title = c.canvas.closest('.card')?.querySelector('.charthead h3')?.textContent || 'Figura';
+  const title = (c.canvas.closest('.card')?.querySelector('.charthead h3')?.childNodes[0]?.textContent || 'Figura').trim();
   const hasBar = c.data.datasets.some((d, i) => c.getDatasetMeta(i).type === 'bar');
   const single = c.data.datasets.length === 1 && c.config.type === 'bar';
   const axisName = k => k === 'x' ? 'Título do eixo X' : k === 'y' ? 'Título do eixo Y' : 'Título do eixo Y (direita)';
   let h = '<div class="fig-sec">Cores</div>';
-  c.data.datasets.forEach((d, i) => { h += `<div class="fig-row"><span>${figEsc(d.label || (single ? 'Barras' : 'Série ' + (i+1)))}</span><input type="color" data-col="${i}" value="${figHex((e.colors && e.colors[i]) || b.colors[i].bg || b.colors[i].bd)}"></div>`; });
+  c.data.datasets.forEach((d, i) => { const key = d.figKey || i;
+    h += `<div class="fig-row"><span title="${figEsc(d.label || '')}">${figEsc(d.label || (single ? 'Barras' : 'Série ' + (i+1)))}</span><input type="color" data-col="${key}" value="${figHex((e.colors && e.colors[key]) || b.colors[i].bg || b.colors[i].bd)}"></div>`;
+    if(b.colors[i].line){ const dv = (e.dashes && e.dashes[key]) || ((b.colors[i].dash || []).length ? 'dash' : 'solid');
+      h += `<div class="fig-row" style="margin-top:-2px"><span class="fig-sub" style="margin:0">espessura e estilo</span><input class="fig-num" style="width:62px" type="number" min="0.5" max="10" step="0.5" data-width="${key}" value="${(e.widths && e.widths[key] != null) ? e.widths[key] : (b.colors[i].bw || 2)}"><select data-dash="${key}" style="width:108px;flex:none"><option value="solid"${dv === 'solid' ? ' selected' : ''}>contínua</option><option value="dash"${dv === 'dash' ? ' selected' : ''}>tracejada</option><option value="dot"${dv === 'dot' ? ' selected' : ''}>pontilhada</option></select></div>`; } });
   if(single) h += `<span class="fig-lbl">Paleta das barras</span><select data-k="pal">${Object.entries(FIG_PALS).map(([k,p]) => `<option value="${k}"${(e.pal || 'unica') === k ? ' selected' : ''}>${p.label}</option>`).join('')}</select>`;
   h += '<div class="fig-sec">Texto</div>';
   h += `<div class="fig-row"><span>Tamanho da fonte</span><input class="fig-num" type="number" min="8" max="28" step="1" data-k="font" value="${+e.font || 13}"></div>`;
@@ -1750,7 +1759,9 @@ function figOpen(id, name){
   const p = figPanel('Editar figura', title, h); FIGED.cur = id;
   const ed = () => (FIGED.edits[id] = FIGED.edits[id] || {});
   const commit = () => { figSave(); figApply(id); };
-  p.querySelectorAll('[data-col]').forEach(inp => inp.addEventListener('input', () => { const x = ed(); x.colors = x.colors || []; x.colors[+inp.dataset.col] = inp.value; if(single){ x.pal = 'unica'; const s = p.querySelector('[data-k="pal"]'); if(s) s.value = 'unica'; } commit(); }));
+  p.querySelectorAll('[data-width]').forEach(inp => inp.addEventListener('change', () => { const x = ed(); x.widths = x.widths || {}; x.widths[inp.dataset.width] = Math.max(.5, Math.min(10, +inp.value || 2)); commit(); }));
+  p.querySelectorAll('[data-dash]').forEach(inp => inp.addEventListener('change', () => { const x = ed(); x.dashes = x.dashes || {}; x.dashes[inp.dataset.dash] = inp.value; commit(); }));
+  p.querySelectorAll('[data-col]').forEach(inp => inp.addEventListener('input', () => { const x = ed(); x.colors = Array.isArray(x.colors) ? Object.assign({}, x.colors) : (x.colors || {}); x.colors[inp.dataset.col] = inp.value; if(single){ x.pal = 'unica'; const s = p.querySelector('[data-k="pal"]'); if(s) s.value = 'unica'; } commit(); }));
   p.querySelectorAll('[data-title]').forEach(inp => inp.addEventListener('input', () => { const x = ed(); x.titles = x.titles || {}; x.titles[inp.dataset.title] = inp.value; commit(); }));
   p.querySelectorAll('[data-k]').forEach(inp => inp.addEventListener('change', () => { const x = ed(), k = inp.dataset.k; x[k] = k === 'pal' ? inp.value : (+inp.value || undefined); commit(); }));
   p.querySelectorAll('[data-ck]').forEach(inp => inp.addEventListener('change', () => { ed()[inp.dataset.ck] = inp.checked; commit(); }));
@@ -1812,8 +1823,12 @@ function table(id, head, rows){ document.getElementById(id).innerHTML = '<thead>
 function clearAnalysisUI(){
   ['leis','an','net'].forEach(p => { document.getElementById(p + '-empty').classList.remove('hidden'); document.getElementById(p + '-body').classList.add('hidden'); });
 }
-/* ---------- tendência do tema: modelos de ajuste, R² e período de alta ---------- */
+/* ---------- tendência do tema: modelos de ajuste, R², valor de p e período de alta ---------- */
 let TREND_CUR = null;
+const TREND_KEYS = {linear: 'Linear', exp: 'Exponencial', log: 'Logarítmico', poly: 'Polinomial (2º grau)'};
+const TREND_PREFS = {show: {linear: true, exp: true, log: true, poly: true}, bars: true, r2: true, p: false, eq: false, model: 'auto'};
+try{ const sv = JSON.parse(localStorage.getItem('sala-bibliometrica-tendencia-v1') || 'null'); if(sv){ Object.assign(TREND_PREFS, sv, {show: Object.assign(TREND_PREFS.show, sv.show || {})}); } }catch(e){}
+function trendSavePrefs(){ try{ localStorage.setItem('sala-bibliometrica-tendencia-v1', JSON.stringify(TREND_PREFS)); }catch(e){} }
 function trendSolve(A, b){
   const n = b.length, M = A.map((r,i) => [...r, b[i]]);
   for(let c = 0; c < n; c++){
@@ -1824,7 +1839,30 @@ function trendSolve(A, b){
   }
   return M.map((r,i) => r[n]/r[i]);
 }
-function trendCompute(temporal){
+/* valor de p do teste F da regressão (função beta incompleta regularizada) */
+function statLnGamma(x){ const c = [76.18009172947146, -86.50532032941677, 24.01409824083091, -1.231739572450155, .1208650973866179e-2, -.5395239384953e-5]; let y = x, t = x + 5.5; t -= (x + .5)*Math.log(t); let s = 1.000000000190015; for(let j = 0; j < 6; j++) s += c[j]/++y; return -t + Math.log(2.5066282746310005*s/x); }
+function statBetaCF(a, b, x){
+  const TINY = 1e-300; let qab = a+b, qap = a+1, qam = a-1, c = 1, d = 1 - qab*x/qap; if(Math.abs(d) < TINY) d = TINY; d = 1/d; let h = d;
+  for(let m = 1; m <= 300; m++){ const m2 = 2*m; let aa = m*(b-m)*x/((qam+m2)*(a+m2));
+    d = 1 + aa*d; if(Math.abs(d) < TINY) d = TINY; c = 1 + aa/c; if(Math.abs(c) < TINY) c = TINY; d = 1/d; h *= d*c;
+    aa = -(a+m)*(qab+m)*x/((a+m2)*(qap+m2));
+    d = 1 + aa*d; if(Math.abs(d) < TINY) d = TINY; c = 1 + aa/c; if(Math.abs(c) < TINY) c = TINY; d = 1/d; const del = d*c; h *= del; if(Math.abs(del-1) < 3e-14) break; }
+  return h;
+}
+function statIBeta(x, a, b){ if(x <= 0) return 0; if(x >= 1) return 1; const bt = Math.exp(statLnGamma(a+b) - statLnGamma(a) - statLnGamma(b) + a*Math.log(x) + b*Math.log(1-x)); return x < (a+1)/(a+b+2) ? bt*statBetaCF(a,b,x)/a : 1 - bt*statBetaCF(b,a,1-x)/b; }
+function statFp(r2, k, n){ const d2 = n-k-1; if(d2 <= 0 || !isFinite(r2)) return NaN; if(r2 >= 1) return 0; if(r2 <= 0) return 1; const F = (r2/k)/((1-r2)/d2); return statIBeta(d2/(d2 + k*F), d2/2, k/2); }
+function fmtP(p){ return !isFinite(p) ? '–' : p < .001 ? '< 0,001' : p.toLocaleString('pt-BR', {minimumFractionDigits: 3, maximumFractionDigits: 3}); }
+function trendShape(m, y0, n){
+  if(m.key === 'linear') return m.p.b > 0 ? `crescimento aproximadamente constante, de ${fmt1(m.p.b)} documentos a mais por ano` : m.p.b < 0 ? `queda aproximadamente constante, de ${fmt1(Math.abs(m.p.b))} documentos a menos por ano` : 'produção sem variação sistemática';
+  if(m.key === 'exp') return m.p.b > 0 ? `crescimento acelerado, de cerca de ${fmt1((Math.exp(m.p.b)-1)*100)}% ao ano` : `queda proporcional, de cerca de ${fmt1((1-Math.exp(m.p.b))*100)}% ao ano`;
+  if(m.key === 'log') return m.p.b > 0 ? 'crescimento rápido no início e cada vez mais lento, típico de tema que se aproxima da saturação' : 'queda rápida no início e cada vez mais lenta';
+  const c = m.p.c, v = c[2] !== 0 ? -c[1]/(2*c[2]) : NaN;
+  if(c[2] < 0 && v > 1 && v < n) return `curva com máximo por volta de ${Math.round(y0 + v - 1)}: ascensão seguida de queda`;
+  if(c[2] < 0) return 'crescimento que perde força ao longo do tempo';
+  if(v > 1 && v < n) return `curva com mínimo por volta de ${Math.round(y0 + v - 1)}: queda seguida de retomada`;
+  return 'crescimento que ganha força ao longo do tempo';
+}
+function trendCompute(temporal, chosen){
   const nowY = new Date().getFullYear();
   const T = (temporal || []).filter(([y]) => y < nowY);
   const dropped = (temporal || []).length - T.length;
@@ -1834,14 +1872,15 @@ function trendCompute(temporal){
   const score = (f, k) => { const sse = y.reduce((s,v,i) => s + (v - f(t[i]))**2, 0), r2 = sst > 0 ? 1 - sse/sst : 0; return {r2, adj: n-k-1 > 0 ? 1 - (1-r2)*(n-1)/(n-k-1) : r2}; };
   const sg = v => (v < 0 ? '- ' : '+ ') + fmt2(Math.abs(v));
   const models = [];
-  { const m = ols(t, y), f = x => m.a + m.b*x; models.push(Object.assign({key: 'linear', label: 'Linear', eq: `y = ${fmt2(m.a)} ${sg(m.b)}·t`, f, k: 1, p: m}, score(f, 1))); }
+  { const m = ols(t, y), f = x => m.a + m.b*x, sc = score(f, 1); models.push(Object.assign({key: 'linear', label: TREND_KEYS.linear, eq: `y = ${fmt2(m.a)} ${sg(m.b)}·t`, f, k: 1, p: m, pval: statFp(sc.r2, 1, n)}, sc)); }
   { const pos = t.map((x,i) => [x, y[i]]).filter(p => p[1] > 0);
-    if(pos.length >= 4){ const m = ols(pos.map(p => p[0]), pos.map(p => Math.log(p[1]))), A = Math.exp(m.a), f = x => A*Math.exp(m.b*x); models.push(Object.assign({key: 'exp', label: 'Exponencial', eq: `y = ${fmt2(A)}·e^(${fmt2(m.b).replace('-', '-')}·t)`, f, k: 1, p: {a: A, b: m.b}}, score(f, 1))); } }
-  { const m = ols(t.map(x => Math.log(x)), y), f = x => m.a + m.b*Math.log(x); models.push(Object.assign({key: 'log', label: 'Logarítmico', eq: `y = ${fmt2(m.a)} ${sg(m.b)}·ln(t)`, f, k: 1, p: m}, score(f, 1))); }
+    if(pos.length >= 4){ const m = ols(pos.map(p => p[0]), pos.map(p => Math.log(p[1]))), A = Math.exp(m.a), f = x => A*Math.exp(m.b*x); models.push(Object.assign({key: 'exp', label: TREND_KEYS.exp, eq: `y = ${fmt2(A)}·e^(${fmt2(m.b)}·t)`, f, k: 1, p: {a: A, b: m.b}, pval: statFp(m.r2, 1, pos.length), plog: true}, score(f, 1))); } }
+  { const m = ols(t.map(x => Math.log(x)), y), f = x => m.a + m.b*Math.log(x), sc = score(f, 1); models.push(Object.assign({key: 'log', label: TREND_KEYS.log, eq: `y = ${fmt2(m.a)} ${sg(m.b)}·ln(t)`, f, k: 1, p: m, pval: statFp(sc.r2, 1, n)}, sc)); }
   { const S = k => t.reduce((s,x) => s + x**k, 0), Sy = k => t.reduce((s,x,i) => s + x**k*y[i], 0);
     const c = trendSolve([[n, S(1), S(2)], [S(1), S(2), S(3)], [S(2), S(3), S(4)]], [Sy(0), Sy(1), Sy(2)]);
-    if(c){ const f = x => c[0] + c[1]*x + c[2]*x*x; models.push(Object.assign({key: 'poly', label: 'Polinomial (2º grau)', eq: `y = ${fmt2(c[0])} ${sg(c[1])}·t ${sg(c[2])}·t²`, f, k: 2, p: {c}}, score(f, 2))); } }
+    if(c){ const f = x => c[0] + c[1]*x + c[2]*x*x, sc = score(f, 2); models.push(Object.assign({key: 'poly', label: TREND_KEYS.poly, eq: `y = ${fmt2(c[0])} ${sg(c[1])}·t ${sg(c[2])}·t²`, f, k: 2, p: {c}, pval: statFp(sc.r2, 2, n)}, sc)); } }
   const best = [...models].sort((a,b) => b.adj - a.adj)[0];
+  const sel = models.find(m => m.key === chosen) || best, manual = sel !== best || (chosen && chosen !== 'auto' && sel.key === chosen);
   // pico e período de alta (anos consecutivos, em torno do pico, com pelo menos 50% do pico)
   let ip = 0; y.forEach((v,i) => { if(v >= y[ip]) ip = i; });
   const peak = y[ip], thr = peak*.5; let ia = ip, ib = ip;
@@ -1852,35 +1891,43 @@ function trendCompute(temporal){
   const stillHot = ib === n-1;
   const status = stillHot ? (recent === 'up' ? 'Tema em alta e em ascensão' : recent === 'flat' ? 'Tema em alta, em platô' : 'Tema em alta, com sinais de desaceleração')
                           : (recent === 'down' ? 'Tema em declínio' : recent === 'up' ? 'Tema em retomada' : 'Tema estabilizado abaixo do pico');
-  let shape = '';
-  if(best.key === 'linear') shape = best.p.b > 0 ? `crescimento aproximadamente constante, de ${fmt1(best.p.b)} documentos a mais por ano` : best.p.b < 0 ? `queda aproximadamente constante, de ${fmt1(Math.abs(best.p.b))} documentos a menos por ano` : 'produção sem variação sistemática';
-  else if(best.key === 'exp') shape = best.p.b > 0 ? `crescimento acelerado, de cerca de ${fmt1((Math.exp(best.p.b)-1)*100)}% ao ano` : `queda proporcional, de cerca de ${fmt1((1-Math.exp(best.p.b))*100)}% ao ano`;
-  else if(best.key === 'log') shape = best.p.b > 0 ? 'crescimento rápido no início e cada vez mais lento, típico de tema que se aproxima da saturação' : 'queda rápida no início e cada vez mais lenta';
-  else { const c = best.p.c, v = c[2] !== 0 ? -c[1]/(2*c[2]) : NaN;
-    if(c[2] < 0 && v > 1 && v < n) shape = `curva com máximo por volta de ${Math.round(y0 + v - 1)}: ascensão seguida de queda`;
-    else if(c[2] < 0) shape = 'crescimento que perde força ao longo do tempo';
-    else if(v > 1 && v < n) shape = `curva com mínimo por volta de ${Math.round(y0 + v - 1)}: queda seguida de retomada`;
-    else shape = 'crescimento que ganha força ao longo do tempo'; }
-  return {ok: true, n, dropped, y0, y1: T[n-1][0], years: T.map(p => p[0]), y, t, models, best, peakYear: T[ip][0], peak, hotFrom: T[ia][0], hotTo: T[ib][0], stillHot, recent, recentSlope: rs, recentWindow: w, status, shape, small: peak < 5};
+  return {ok: true, n, dropped, y0, y1: T[n-1][0], years: T.map(p => p[0]), y, t, models, best, sel, manual, peakYear: T[ip][0], peak, hotFrom: T[ia][0], hotTo: T[ib][0], stillHot, recent, recentSlope: rs, recentWindow: w, status, shape: trendShape(sel, y0, n), small: peak < 5};
+}
+function trendControls(R){
+  const box = document.getElementById('trend-ctrls'); if(!box) return;
+  const P = TREND_PREFS, ck = (k, label, on) => `<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13.5px"><input type="checkbox" data-t="${k}"${on ? ' checked' : ''}>${label}</label>`;
+  box.innerHTML = `<div class="field" style="min-width:230px;margin:0"><label>Modelo para a interpretação</label><select data-t="model"><option value="auto">Automático (melhor R² ajustado)</option>${R.models.map(m => `<option value="${m.key}"${P.model === m.key ? ' selected' : ''}>${m.label}</option>`).join('')}</select></div>` +
+    `<div style="display:flex;flex-direction:column;gap:6px"><span class="small muted">Curvas no gráfico</span><div style="display:flex;gap:14px;flex-wrap:wrap">${R.models.map(m => ck('show:' + m.key, m.label, P.show[m.key] !== false)).join('')}${ck('bars', 'Barras observadas', P.bars)}</div></div>` +
+    `<div style="display:flex;flex-direction:column;gap:6px"><span class="small muted">Mostrar na legenda</span><div style="display:flex;gap:14px;flex-wrap:wrap">${ck('r2', 'R²', P.r2)}${ck('p', 'Valor de p', P.p)}${ck('eq', 'Equação', P.eq)}</div></div>` +
+    `<div class="actions"><button class="btn sm" type="button" data-t="only">Só o modelo escolhido</button><button class="btn sm" type="button" data-t="all">Todos</button></div>`;
+  box.querySelectorAll('input[data-t]').forEach(inp => inp.addEventListener('change', () => { const k = inp.dataset.t; if(k.startsWith('show:')) P.show[k.slice(5)] = inp.checked; else P[k] = inp.checked; trendSavePrefs(); renderTrend(); }));
+  box.querySelector('select[data-t="model"]').addEventListener('change', ev => { P.model = ev.target.value; trendSavePrefs(); renderTrend(); });
+  box.querySelector('[data-t="only"]').addEventListener('click', () => { const s = TREND_CUR && TREND_CUR.sel; Object.keys(TREND_KEYS).forEach(k => P.show[k] = !!s && k === s.key); trendSavePrefs(); renderTrend(); });
+  box.querySelector('[data-t="all"]').addEventListener('click', () => { Object.keys(TREND_KEYS).forEach(k => P.show[k] = true); trendSavePrefs(); renderTrend(); });
 }
 function renderTrend(){
   const box = document.getElementById('ch-trend'); if(!box || !RESULTS) return;
-  const R = TREND_CUR = trendCompute(RESULTS.temporal);
+  const P = TREND_PREFS, R = TREND_CUR = trendCompute(RESULTS.temporal, P.model);
   if(!R.ok){
     if(CHARTS['ch-trend']){ CHARTS['ch-trend'].destroy(); delete CHARTS['ch-trend']; }
-    document.getElementById('k-trend').innerHTML = ''; document.getElementById('t-trend').innerHTML = '';
+    ['k-trend','t-trend','trend-ctrls'].forEach(id => { const el = document.getElementById(id); if(el) el.innerHTML = ''; });
     document.getElementById('i-trend').innerHTML = `São necessários pelo menos 5 anos completos para ajustar os modelos de tendência. Este corpus tem ${R.n}.`;
     return;
   }
+  trendControls(R);
   const hot = R.stillHot ? `desde ${R.hotFrom}` : (R.hotFrom === R.hotTo ? `${R.hotFrom}` : `${R.hotFrom} a ${R.hotTo}`);
-  kpis('k-trend', [[esc(R.status), 'situação do tema'], [esc(R.best.label), 'melhor modelo'], [fmt2(R.best.r2), 'R² do melhor modelo'], [`${R.peakYear} (${fmt(R.peak)})`, 'ano de pico (documentos)'], [hot, 'período de alta']]);
+  kpis('k-trend', [[esc(R.status), 'situação do tema'], [esc(R.sel.label), R.manual && R.sel !== R.best ? 'modelo escolhido' : 'melhor modelo'], [fmt2(R.sel.r2), 'R² do modelo'], [fmtP(R.sel.pval), 'valor de p'], [`${R.peakYear} (${fmt(R.peak)})`, 'ano de pico (documentos)'], [hot, 'período de alta']]);
   const cols = {linear: PAL[1], exp: PAL[5], log: PAL[2], poly: PAL[3]};
-  mkChart('ch-trend', 'bar', {labels: R.years, datasets: [{type: 'bar', label: 'Documentos por ano', data: R.y, backgroundColor: '#c9dcea', borderRadius: 2, order: 10},
-    ...R.models.map(m => ({type: 'line', label: `${m.label} (R² = ${fmt2(m.r2)})`, data: R.t.map(x => Math.max(0, +m.f(x).toFixed(3))), borderColor: cols[m.key], backgroundColor: cols[m.key], pointRadius: 0, tension: .25, borderWidth: m === R.best ? 3.5 : 1.5, borderDash: m === R.best ? [] : [6, 4], order: m === R.best ? 1 : 2}))]},
-    {plugins: {legend: {display: true, position: 'bottom'}}, scales: {x: Object.assign({title: {display: true, text: 'Ano'}}, AX, {grid: {display: false}}), y: Object.assign({beginAtZero: true, min: 0, title: {display: true, text: 'Documentos'}}, AX)}});
-  table('t-trend', ['Modelo', 'Equação (t = 1 em ' + R.y0 + ')', {t: 'R²', n: 1}, {t: 'R² ajustado', n: 1}, ''], [...R.models].sort((a,b) => b.adj - a.adj).map(m => [esc(m.label), esc(m.eq), fmt2(m.r2), fmt2(m.adj), m === R.best ? '<b>melhor ajuste</b>' : '']));
-  const weak = R.best.r2 < .5;
-  document.getElementById('i-trend').innerHTML = `<b>${esc(R.status)}.</b> Entre ${R.y0} e ${R.y1}, o modelo que melhor descreve a produção anual é o <b>${esc(R.best.label.toLowerCase())}</b> (R² = ${fmt2(R.best.r2)})` + (weak ? '. O ajuste é fraco: nenhum modelo descreve bem a série, e a produção oscila sem tendência clara. ' : `, o que indica ${esc(R.shape)}. `) +
+  const lab = m => [P.eq ? m.eq : m.label, P.r2 ? `R² = ${fmt2(m.r2)}` : '', P.p ? `p ${fmtP(m.pval).startsWith('<') ? fmtP(m.pval) : '= ' + fmtP(m.pval)}` : ''].filter(Boolean).join('; ');
+  const ds = [];
+  if(P.bars) ds.push({type: 'bar', figKey: 'bars', label: 'Documentos por ano', data: R.y, backgroundColor: '#c9dcea', borderRadius: 2, order: 10});
+  R.models.filter(m => P.show[m.key] !== false).forEach(m => ds.push({type: 'line', figKey: m.key, label: lab(m), data: R.t.map(x => Math.max(0, +m.f(x).toFixed(3))), borderColor: cols[m.key], backgroundColor: cols[m.key], pointRadius: 0, tension: .25, borderWidth: m === R.sel ? 3.5 : 1.5, borderDash: m === R.sel ? [] : [6, 4], order: m === R.sel ? 1 : 2}));
+  mkChart('ch-trend', 'bar', {labels: R.years, datasets: ds},
+    {plugins: {legend: {display: true, position: 'bottom', labels: {boxWidth: 26, boxHeight: 3, usePointStyle: false}}}, scales: {x: Object.assign({title: {display: true, text: 'Ano'}}, AX, {grid: {display: false}}), y: Object.assign({beginAtZero: true, min: 0, title: {display: true, text: 'Documentos'}}, AX)}});
+  table('t-trend', ['Modelo', 'Equação (t = 1 em ' + R.y0 + ')', {t: 'R²', n: 1}, {t: 'R² ajustado', n: 1}, {t: 'p', n: 1}, ''], [...R.models].sort((a,b) => b.adj - a.adj).map(m => [esc(m.label), esc(m.eq), fmt2(m.r2), fmt2(m.adj), fmtP(m.pval), [m === R.best ? '<b>melhor ajuste</b>' : '', m === R.sel && R.sel !== R.best ? '<b>escolhido</b>' : ''].filter(Boolean).join(' ')]));
+  const weak = R.sel.r2 < .5, pick = R.sel === R.best ? 'o modelo que melhor descreve a produção anual é o' : 'o modelo escolhido para descrever a produção anual é o';
+  document.getElementById('i-trend').innerHTML = `<b>${esc(R.status)}.</b> Entre ${R.y0} e ${R.y1}, ${pick} <b>${esc(R.sel.label.toLowerCase())}</b> (R² = ${fmt2(R.sel.r2)}; p ${fmtP(R.sel.pval).startsWith('<') ? fmtP(R.sel.pval) : '= ' + fmtP(R.sel.pval)})` + (weak ? '. O ajuste é fraco: o modelo não descreve bem a série, e a produção oscila sem tendência clara. ' : `, o que indica ${esc(R.shape)}. `) +
+    (R.sel !== R.best ? `O melhor ajuste pelo R² ajustado seria o ${esc(R.best.label.toLowerCase())} (R² = ${fmt2(R.best.r2)}). ` : '') +
     `O pico foi em ${R.peakYear}, com ${fmt(R.peak)} documentos. Pelo critério de pelo menos metade do pico, o tema ` + (R.stillHot ? `está em alta desde ${R.hotFrom}. ` : `esteve em alta ${R.hotFrom === R.hotTo ? 'em ' + R.hotFrom : 'de ' + R.hotFrom + ' a ' + R.hotTo}. `) +
     `Nos últimos ${R.recentWindow} anos completos a produção ${R.recent === 'up' ? 'cresceu' : R.recent === 'down' ? 'caiu' : 'ficou estável'} (${R.recentSlope >= 0 ? '+' : '-'}${fmt1(Math.abs(R.recentSlope))} documentos por ano).` +
     (R.small ? ' Atenção: o pico tem menos de 5 documentos por ano, então qualquer tendência deve ser lida com cautela.' : '') + (R.dropped ? ' O ano corrente foi excluído por estar incompleto.' : '');
@@ -1904,10 +1951,10 @@ function helpContent(key){
       p: pk ? `A produção sobre o tema somou ${fmt(S.documents)} documentos entre ${S.yearMin} e ${S.yearMax}, com pico em ${pk[0]} (${fmt(pk[1])} documentos).` + (S.growth == null ? '' : ` A taxa composta de crescimento anual foi de ${fmt1(S.growth)}% entre o primeiro e o último ano completo.`) : 'O corpus não tem ano de publicação identificado.'}; }
   if(key === 'trend'){ const X = TREND_CUR;
     const base = {t: 'Tendência do tema', o: 'Ajusta quatro modelos à produção anual (linear, exponencial, logarítmico e polinomial de 2º grau) e aponta o que melhor descreve a série. Também identifica o ano de pico, o período em que o tema esteve em alta e o que aconteceu nos últimos anos.',
-      l: 'O R² vai de 0 a 1 e mede quanto da variação anual o modelo explica. O melhor modelo é o de maior R² ajustado, que desconta a vantagem de modelos com mais parâmetros. Linear indica crescimento constante. Exponencial indica crescimento acelerado, típico de tema em expansão. Logarítmico indica crescimento que desacelera, típico de tema perto da saturação. Polinomial com pico indica ascensão seguida de queda. O período de alta reúne os anos seguidos, em torno do pico, com pelo menos metade da produção do pico. A situação do tema combina esse período com a inclinação dos últimos 5 anos completos: acima de +5% ao ano é ascensão, abaixo de -5% é declínio e entre os dois é estabilidade.',
+      l: 'O R² vai de 0 a 1 e mede quanto da variação anual o modelo explica. O melhor modelo é o de maior R² ajustado, que desconta a vantagem de modelos com mais parâmetros. Linear indica crescimento constante. Exponencial indica crescimento acelerado, típico de tema em expansão. Logarítmico indica crescimento que desacelera, típico de tema perto da saturação. Polinomial com pico indica ascensão seguida de queda. O valor de p vem do teste F da regressão: abaixo de 0,05, a tendência é estatisticamente significativa. No modelo exponencial, o p refere-se ao ajuste linear do logaritmo da produção. Você pode escolher o modelo usado na interpretação e quais curvas aparecem no gráfico. O período de alta reúne os anos seguidos, em torno do pico, com pelo menos metade da produção do pico. A situação do tema combina esse período com a inclinação dos últimos 5 anos completos: acima de +5% ao ano é ascensão, abaixo de -5% é declínio e entre os dois é estabilidade.',
       c: 'Os limites de 50% do pico e de 5% ao ano são critérios desta Sala, escolhidos por serem simples e transparentes. Descreva-os no método se usar o resultado. Séries curtas ou com poucos documentos por ano dão ajustes instáveis. Um R² alto descreve o passado e não garante o futuro. O ano corrente é excluído por estar incompleto.'};
     if(!X || !X.ok) return Object.assign(base, {p: 'O corpus não tem anos completos suficientes para ajustar os modelos de tendência (mínimo de 5).'});
-    return Object.assign(base, {p: `A produção anual de ${X.y0} a ${X.y1} foi ajustada por mínimos quadrados a quatro modelos: linear, exponencial, logarítmico e polinomial de segundo grau. O melhor ajuste, pelo R² ajustado, foi o modelo ${X.best.label.toLowerCase()} (R² = ${fmt2(X.best.r2)}; R² ajustado = ${fmt2(X.best.adj)})` + (X.best.r2 < .5 ? '. O ajuste foi fraco, o que indica produção oscilante, sem tendência definida' : `, o que indica ${X.shape}`) + `. O pico de produção ocorreu em ${X.peakYear}, com ${fmt(X.peak)} documentos. Considerando os anos consecutivos com pelo menos 50% da produção do pico, o tema ` + (X.stillHot ? `está em alta desde ${X.hotFrom}` : `esteve em alta ${X.hotFrom === X.hotTo ? 'em ' + X.hotFrom : 'de ' + X.hotFrom + ' a ' + X.hotTo}`) + `. Nos últimos ${X.recentWindow} anos completos, a variação média foi de ${X.recentSlope >= 0 ? '+' : '-'}${fmt1(Math.abs(X.recentSlope))} documentos por ano, o que caracteriza ${X.recent === 'up' ? 'ascensão' : X.recent === 'down' ? 'declínio' : 'estabilidade'}.`}); }
+    return Object.assign(base, {p: `A produção anual de ${X.y0} a ${X.y1} foi ajustada por mínimos quadrados a quatro modelos: linear, exponencial, logarítmico e polinomial de segundo grau. ${X.sel === X.best ? 'O melhor ajuste, pelo R² ajustado, foi o modelo' : 'Para a interpretação foi adotado o modelo'} ${X.sel.label.toLowerCase()} (R² = ${fmt2(X.sel.r2)}; R² ajustado = ${fmt2(X.sel.adj)}; p ${fmtP(X.sel.pval).startsWith('<') ? fmtP(X.sel.pval) : '= ' + fmtP(X.sel.pval)}, teste F da regressão)` + (X.sel.r2 < .5 ? '. O ajuste foi fraco, o que indica produção oscilante, sem tendência definida' : `, o que indica ${X.shape}`) + `. O pico de produção ocorreu em ${X.peakYear}, com ${fmt(X.peak)} documentos. Considerando os anos consecutivos com pelo menos 50% da produção do pico, o tema ` + (X.stillHot ? `está em alta desde ${X.hotFrom}` : `esteve em alta ${X.hotFrom === X.hotTo ? 'em ' + X.hotFrom : 'de ' + X.hotFrom + ' a ' + X.hotTo}`) + `. Nos últimos ${X.recentWindow} anos completos, a variação média foi de ${X.recentSlope >= 0 ? '+' : '-'}${fmt1(Math.abs(X.recentSlope))} documentos por ano, o que caracteriza ${X.recent === 'up' ? 'ascensão' : X.recent === 'down' ? 'declínio' : 'estabilidade'}.`}); }
   if(key === 'autores') return {t: 'Autores mais produtivos', o: 'Ordena os autores pelo número de documentos do corpus em que aparecem.', l: 'Cada documento conta uma vez para cada um dos seus autores (contagem inteira). Um artigo com cinco autores soma um documento para cada um dos cinco.', c: 'A mesma pessoa pode aparecer com grafias diferentes, e pessoas diferentes podem ter o mesmo nome abreviado. Use o botão Corrigir nomes antes de interpretar. Produtividade não é o mesmo que impacto: veja também os documentos mais citados.',
     p: `Os autores com mais documentos no corpus foram ${top(R.authors, 5)}. A contagem considerou cada documento uma vez para cada autor (contagem inteira).`};
   if(key === 'journals') return {t: 'Periódicos com mais artigos', o: 'Ordena os periódicos pelo número de documentos do corpus que publicaram.', l: 'Os primeiros periódicos são os principais veículos do tema. Eles indicam onde ler e onde submeter.', c: 'O mesmo periódico pode aparecer com nome completo e abreviado. Use Corrigir nomes para unir. Volume de artigos não mede qualidade do periódico.',
@@ -1953,6 +2000,19 @@ function helpOpen(key){
     const t = h.p;
     (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Texto copiado')).catch(() => { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); try{ document.execCommand('copy'); toast('Texto copiado'); }catch(e){ toast('Selecione o texto e copie'); } ta.remove(); });
   });
+}
+function staleBanner(){
+  const host = document.getElementById('an-body'); if(!host) return;
+  let el = document.getElementById('stale-msg');
+  const stale = typeof PROJ !== 'undefined' && PROJ && PROJ.id && RESULTS && RESULTS.version !== APP_VERSION;
+  if(!stale){ if(el) el.remove(); return; }
+  if(!el){ el = document.createElement('div'); el.id = 'stale-msg'; host.prepend(el); }
+  el.innerHTML = `<div class="msg warn" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:space-between"><span>Estes resultados foram calculados na versão ${esc(RESULTS.version || 'anterior')} da Sala. A versão ${APP_VERSION} corrige a leitura de países, autores e duplicatas. Recalcule para atualizar os números.</span><button class="btn sm primary" type="button" onclick="staleRecalc()">Recalcular agora</button></div>`;
+}
+async function staleRecalc(){
+  if(CORPUS){ computeAll(); renderAll(); saveResults(true); toast('Resultados recalculados'); return; }
+  if(PROJ && PROJ.file && PROJ.file.path && typeof reloadRaw === 'function'){ showTab('dados'); await reloadRaw(); if(CORPUS) toast('Resultados recalculados'); return; }
+  showTab('dados'); setMsg('data-msg', 'Para recalcular, importe de novo o arquivo exportado da base nesta aba.', 'warn');
 }
 function helpButtons(){
   const add = (h3, key) => {
@@ -2017,6 +2077,7 @@ function renderAll(){
 
   renderNetwork();
   try{ helpButtons(); }catch(e){ console.warn('Explicações:', e); }
+  try{ staleBanner(); }catch(e){ console.warn('Aviso de versão:', e); }
   adaptSciELOUI();
   $('#save-status').textContent = '';
 }
@@ -2425,7 +2486,7 @@ function allTables(){
   const R = RESULTS;
   return [
     ['producao-anual', [['Ano','Documentos'], ...R.temporal]],
-    ...(TREND_CUR && TREND_CUR.ok ? [['tendencia-modelos', [['Modelo','Equação','R2','R2 ajustado','Melhor ajuste'], ...TREND_CUR.models.map(m => [m.label, m.eq, m.r2.toFixed(4), m.adj.toFixed(4), m === TREND_CUR.best ? 'sim' : ''])]]] : []),
+    ...(TREND_CUR && TREND_CUR.ok ? [['tendencia-modelos', [['Modelo','Equação','R2','R2 ajustado','p','Melhor ajuste'], ...TREND_CUR.models.map(m => [m.label, m.eq, m.r2.toFixed(4), m.adj.toFixed(4), isFinite(m.pval) ? m.pval.toExponential(3) : '', m === TREND_CUR.best ? 'sim' : ''])]]] : []),
     ['autores', [['Autor','Documentos'], ...R.authors]], ['periodicos', [['Periódico','Documentos'], ...R.journals]],
     ['palavras-chave', [['Palavra-chave','Ocorrências'], ...R.keywords]], ['keywords-plus', [['Keywords Plus','Ocorrências'], ...R.kwplus]],
     ['areas', [['Área','Documentos'], ...R.areas]], ['paises', [['País','Documentos'], ...R.countries]], ['instituicoes', [['Instituição','Documentos'], ...R.institutions]],
