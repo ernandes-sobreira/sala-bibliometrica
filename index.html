@@ -911,7 +911,7 @@ function conceptRenumber(){ conceptInputs().forEach((inp, i) => { const l = inp.
 function conceptChanged(){ conceptChips(); conceptSave(); generate(); }
 function conceptChips(){
   conceptInputs().forEach(inp => { const box = inp.parentNode.querySelector('.concept-chips'); if(!box) return; const t = qterms(inp.value).map(quoteIfNeeded);
-    box.innerHTML = t.length ? t.map(x => `<span class="pill" style="background:#f3f8fb;border-color:#c5dbe4;color:#0c4e64">${esc(x)}</span>`).join('') + `<span class="small muted"> ${t.length} ${t.length === 1 ? 'termo' : 'termos'} ligados por OR</span>` : ''; });
+    box.innerHTML = t.length ? t.map(x => `<span class="pill" style="background:#f3f8fb;border-color:#c5dbe4;color:#0c4e64">${esc(x)}</span>`).join('') + `<span class="small muted"> ${t.length === 1 ? '1 termo' : t.length + ' termos ligados por OR'}</span>` : ''; });
 }
 function conceptAppend(idx, term){
   const inp = conceptInputs()[idx]; if(!inp) return; const cur = qterms(inp.value);
@@ -962,7 +962,7 @@ function termVariants(raw){
     if(ws.length === 1 && /-/.test(low)){ addForms([low.replace(/-/g, '')]); addForms(low.split('-')); }
     out.forEach(o => { const a = o.term.toLowerCase().replace(/^"|"$/g, '').split(/\s+/); addForms(a); });
     SPELL_PAIRS.forEach(([re, to]) => { if(re.test(low)) addForms(low.replace(re, to).split(/\s+/)); });
-    [...cands].map(f => [f, idx.get(f) || 0]).filter(([f, n]) => n > 0 && edNorm(f) !== edNorm(inner)).sort((a, b) => b[1] - a[1]).slice(0, 6).forEach(([f, n]) => {
+    [...cands].map(f => [f, idx.get(f) || 0]).filter(([f, n]) => n > 0 && edNorm(f) !== edNorm(inner) && !(curBase !== 'pubmed' && !isPhrase && !/[\s-]/.test(f) && singular(f) === singular(low))).sort((a, b) => b[1] - a[1]).slice(0, 6).forEach(([f, n]) => {
       const why = `aparece ${fmt(n)} ${n === 1 ? 'vez' : 'vezes'} nos títulos e palavras-chave do seu corpus`, o = out.find(x => edNorm(x.term) === edNorm(f));
       if(o) o.why += '; ' + why; else push(f, why); });
   }
@@ -974,7 +974,7 @@ function renderVariants(){
   const rows = []; blocks.forEach(b => b.terms.forEach(t => { const v = termVariants(t).filter(x => !b.terms.some(y => edNorm(y) === edNorm(x.term))); if(v.length) rows.push({ci: b.ci, t, v}); }));
   host.innerHTML = rows.length ? `<b class="small">Variações para conferir</b><div class="small muted" style="margin:2px 0 8px">A Sala sugere, você decide. Clique em + para incluir no conceito.${varIndex() ? '' : ' Com o arquivo do projeto importado, aparecem também as formas encontradas nos seus documentos.'}</div>` +
     rows.map(r => `<div style="border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff"><div class="small"><b>${esc(r.t)}</b> <span class="muted">(conceito ${r.ci + 1})</span></div>` +
-      r.v.map(x => `<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:6px"><span class="small"><code>${esc(x.term)}</code> <span class="muted">${esc(x.why)}</span></span><button class="btn sm" type="button" onclick="conceptAppend(${r.ci},decodeURIComponent('${encodeURIComponent(x.term)}'))">+ incluir</button></div>`).join('') + '</div>').join('') : '';
+      r.v.map(x => `<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:6px"><span class="small"><code>${esc(x.term)}</code> <span class="muted">${esc(x.why)}</span></span><button class="btn sm" type="button" style="white-space:nowrap;flex:none" onclick="conceptAppend(${r.ci},decodeURIComponent('${encodeURIComponent(x.term)}'))">+ incluir</button></div>`).join('') + '</div>').join('') : '';
 }
 
 /* Regras de escrita de cada base, conferidas nas páginas de ajuda oficiais e em guias de bibliotecas universitárias. */
