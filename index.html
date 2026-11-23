@@ -636,7 +636,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.9.0";
+const APP_VERSION = "1.9.1";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -1788,6 +1788,9 @@ const AX = {grid: {color: '#eef1f4'}, border: {color: '#8a98a6'}, ticks: {color:
 
 const FIGED = {edits: {}, cur: null, KEY: 'sala-bibliometrica-figuras-v1'};
 try{ FIGED.edits = JSON.parse(localStorage.getItem(FIGED.KEY) || '{}') || {}; }catch(e){ FIGED.edits = {}; }
+/* 1.9.1: títulos de eixo editados nas versões anteriores eram guardados por navegador e acabavam com letras soltas
+   (ex.: "Anokj"). Eles são descartados uma vez; cores, fonte, altura e demais ajustes continuam. */
+try{ if(!localStorage.getItem('sala-figuras-titulos-limpos')){ Object.values(FIGED.edits).forEach(e => { if(e && typeof e === 'object') delete e.titles; }); localStorage.setItem(FIGED.KEY, JSON.stringify(FIGED.edits)); localStorage.setItem('sala-figuras-titulos-limpos', '1'); } }catch(e){}
 function figSave(){ try{ localStorage.setItem(FIGED.KEY, JSON.stringify(FIGED.edits)); }catch(e){} }
 
 const FIG_PALS = {
