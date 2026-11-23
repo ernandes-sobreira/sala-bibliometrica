@@ -454,7 +454,7 @@ table.t th.n{text-align:right}
           <div class="lead">Da busca ao corpus analisado: bases consultadas, registros identificados, duplicados removidos e documentos incluídos. Os números vêm do que foi importado neste projeto.</div>
           <div class="grid2" style="align-items:start;margin-bottom:12px">
             <div class="field" style="margin:0"><label>Estratégia de busca mostrada no fluxograma</label><textarea id="flow-query" style="min-height:74px" oninput="flowEdit()" placeholder="Por padrão, usa a string salva no Roteiro de busca"></textarea></div>
-            <div class="field" style="margin:0"><label>Exclusões feitas fora da Sala (opcional): motivo e quantidade</label><textarea id="flow-excl" style="min-height:74px" oninput="flowEdit()" placeholder="Uma por linha: motivo e quantidade&#10;Fora do tema 120&#10;Sem dados originais 35"></textarea><div id="flow-excl-warn"></div><div class="small muted" style="margin-top:6px">Para excluir documentos aqui dentro, com o motivo de cada um, use a <a href="#" onclick="scrGo();return false">Triagem dos documentos</a>. O fluxograma soma os excluídos por motivo.</div><label style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer"><input type="checkbox" id="flow-gray" onchange="flowEdit()" style="width:auto">Tons de cinza</label></div>
+            <div class="field" style="margin:0"><label>Exclusões feitas fora da Sala (opcional): motivo e quantidade</label><textarea id="flow-excl" style="min-height:74px" oninput="flowEdit()" placeholder="Uma por linha: motivo e quantidade&#10;Fora do tema 120&#10;Sem dados originais 35&#10;Duplicados 12 (vai para a caixa de duplicados)"></textarea><div id="flow-excl-warn"></div><div class="small muted" style="margin-top:6px">Para excluir documentos aqui dentro, com o motivo de cada um, use a <a href="#" onclick="scrGo();return false">Triagem dos documentos</a>. O fluxograma soma os excluídos por motivo. Uma linha que começa com "duplicados" vai para a caixa de duplicados.</div><label style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer"><input type="checkbox" id="flow-gray" onchange="flowEdit()" style="width:auto">Tons de cinza</label></div>
           </div>
           <div id="flow-box" style="overflow-x:auto"></div>
         </div>
@@ -636,7 +636,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.9.1";
+const APP_VERSION = "1.9.2";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -2548,9 +2548,11 @@ function flowData(){
   const manual = manualLines.map(l => { const m = /^(.*?\D)\s*[;:=,\t(\-]*\s*(?:N\s*=\s*)?(\d{1,3}(?:\.\d{3})+|\d+)\s*\)?\s*(?:documentos?|registros?|artigos?)?\s*$/i.exec(l); return m ? {label: m[1].replace(/[\s;:=,(\-]+$/, '').trim(), n: +m[2].replace(/\./g, '')} : null; });
   const ignored = manualLines.filter((l, i) => !manual[i] || !manual[i].label || !(manual[i].n > 0));
   const scr = F.screen || {excluded: 0, edited: 0, reasons: []};
-  const excl = [...(scr.reasons || []).map(([label, n]) => ({label, n})), ...manual.filter(x => x && x.label && x.n > 0)];
+  const okManual = manual.filter(x => x && x.label && x.n > 0), isDup = x => /^(registros?\s+|documentos?\s+)?duplica/i.test(x.label);
+  const dupManual = okManual.filter(isDup).reduce((t, x) => t + x.n, 0);
+  const excl = [...(scr.reasons || []).map(([label, n]) => ({label, n})), ...okManual.filter(x => !isDup(x))];
   const exN = excl.reduce((s,x) => s + x.n, 0), rules = PROJ && PROJ.normalizationRules ? Object.entries(PROJ.normalizationRules).filter(([k]) => k !== '__ignore').reduce((s, [,v]) => s + Object.keys(v || {}).length, 0) : 0;
-  return {query: (P.query != null && P.query !== '') ? P.query : (pr.query || ''), date: pr.date || '', filters: pr.filters || '', bases, identified, dup, unique, excl, exN, included: Math.max(0, unique - exN), rules, gray: !!P.gray, ignored, inSala: scr.excluded || 0, edited: scr.edited || 0,
+  return {query: (P.query != null && P.query !== '') ? P.query : (pr.query || ''), date: pr.date || '', filters: pr.filters || '', bases, identified, dup: dup + dupManual, unique: Math.max(0, unique - dupManual), excl, exN, included: Math.max(0, unique - dupManual - exN), rules, gray: !!P.gray, ignored, dupAuto: dup, dupManual, inSala: scr.excluded || 0, edited: scr.edited || 0,
     period: RESULTS.summary.yearMin == null ? '' : RESULTS.summary.yearMin === RESULTS.summary.yearMax ? String(RESULTS.summary.yearMin) : RESULTS.summary.yearMin + ' a ' + RESULTS.summary.yearMax};
 }
 function renderFlow(){
@@ -2563,13 +2565,13 @@ function renderFlow(){
   const fw = document.getElementById('flow-excl-warn'); if(fw) fw.innerHTML = D && D.ignored.length ? '<div class="msg warn" style="margin:8px 0 0">' + (D.ignored.length === 1 ? 'Linha ignorada por falta do número' : 'Linhas ignoradas por falta do número') + ': ' + D.ignored.map(l => esc(cut(l, 40))).join(' | ') + '. Escreva o motivo e depois a quantidade, por exemplo: Fora do tema 120</div>' : '';
   if(fw && D && D.exN > D.unique) fw.innerHTML += '<div class="msg warn" style="margin:8px 0 0">As exclusões somam ' + fmt(D.exN) + ', mais que os ' + fmt(D.unique) + ' documentos únicos do corpus. Confira os números.</div>';
   if(!D){ host.innerHTML = '<div class="msg info">O fluxograma precisa dos resultados recalculados na versão atual da Sala. Use o botão Recalcular agora, no alto desta aba.</div>'; return; }
-  const C = D.gray ? {search: '#f1f3f5', base: '#ffffff', id: '#ffffff', dup: '#dfe3e8', uniq: '#ffffff', rule: '#f1f3f5', excl: '#cfd4da', inc: '#e9ecef', an: '#f8f9fa', line: '#333', text: '#111'}
-                   : {search: '#eef6fb', base: '#ffffff', id: '#ffffff', dup: '#bcd9f2', uniq: '#ffffff', rule: '#e8f3ec', excl: '#f6c9a3', inc: '#ffd54a', an: '#f6f8fa', line: '#1a2332', text: '#1a2332'};
+  const C = D.gray ? {search: '#f1f3f5', base: '#ffffff', id: '#ffffff', dup: '#dfe3e8', uniq: '#ffffff', rule: '#f1f3f5', excl: '#cfd4da', exclItem: '#f1f3f5', inc: '#e9ecef', an: '#f8f9fa', line: '#333', text: '#111'}
+                   : {search: '#eef6fb', base: '#ffffff', id: '#ffffff', dup: '#bcd9f2', uniq: '#ffffff', rule: '#e8f3ec', excl: '#f6c9a3', exclItem: '#fdeedd', inc: '#ffd54a', an: '#f6f8fa', line: '#1a2332', text: '#1a2332'};
   const W = 980, fs = 14, lh = 19, cx = W/2; let y = 16; const parts = [];
   const esc2 = v => String(v ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const box = (x, yy, w, lines, fill, o = {}) => { const h = lines.length*lh + 18;
     parts.push(`<rect x="${x}" y="${yy}" width="${w}" height="${h}" rx="${o.rx ?? 6}" fill="${fill}" stroke="${C.line}" stroke-width="${o.bold ? 2.5 : 1.2}"/>`);
-    lines.forEach((l, i) => parts.push(`<text x="${o.left ? x + 12 : x + w/2}" y="${yy + 9 + lh*(i + .72)}" text-anchor="${o.left ? 'start' : 'middle'}" font-size="${o.fs || fs}" font-weight="${(o.boldFirst && i === 0) || o.bold ? 700 : 400}" fill="${C.text}">${esc2(l)}</text>`));
+    lines.forEach((l, i) => parts.push(`<text x="${o.left ? x + 12 : x + w/2}" y="${yy + 9 + lh*(i + .72)}" text-anchor="${o.left ? 'start' : 'middle'}" font-size="${o.fs || fs}" font-weight="${(o.boldFirst && i === 0) || (o.lastBold && i === lines.length - 1) || o.bold ? 700 : 400}" fill="${C.text}">${esc2(l)}</text>`));
     return h; };
   const arrow = (x1, y1, x2, y2) => parts.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${C.line}" stroke-width="1.4" marker-end="url(#flow-arr)"/>`);
   // 1. estratégia de busca
@@ -2585,7 +2587,7 @@ function renderFlow(){
   const mw = 300, mx = cx - mw/2;
   h = box(mx, y, mw, ['Registros identificados', 'N = ' + fmt(D.identified)], C.id, {boldFirst: true}); let yPrev = y + h;
   // duplicados (à direita)
-  const sw = 270, sx = W - 40 - sw, dupLines = ['Registros duplicados removidos', 'N = ' + fmt(D.dup), 'mesmo DOI ou mesmo título e ano'];
+  const sw = 290, sx = W - 40 - sw, dupLines = ['Registros duplicados removidos', 'N = ' + fmt(D.dup), ...(D.dupManual ? ['automáticos: ' + fmt(D.dupAuto) + ' · informados: ' + fmt(D.dupManual)] : ['mesmo DOI ou mesmo título e ano'])];
   const dy = yPrev + 14; box(sx, dy, sw, dupLines, C.dup, {boldFirst: true, fs: 13}); arrow(cx, dy + 34, sx - 2, dy + 34);
   y = dy + dupLines.length*lh + 18 + 16;
   // 4. únicos
@@ -2594,8 +2596,16 @@ function renderFlow(){
   // padronização (à esquerda)
   if(D.rules){ const ry = y; box(40, ry, 250, ['Padronização de nomes e termos', fmt(D.rules) + ' correções aplicadas'], C.rule, {boldFirst: true, fs: 13}); parts.push(`<line x1="${40 + 250}" y1="${ry + 28}" x2="${mx}" y2="${ry + 28}" stroke="${C.line}" stroke-width="1.2" stroke-dasharray="4 3"/>`); }
   // exclusões posteriores (à direita)
-  if(D.excl.length){ let ey = yPrev + 14; const exL = ['Documentos excluídos na triagem', 'N = ' + fmt(D.exN), ...D.excl.flatMap(e => { const L = flowWrap(e.label, 34, 3), suf = '(N = ' + fmt(e.n) + ')'; if((L[L.length-1] + ' ' + suf).length <= 36) L[L.length-1] += ' ' + suf; else L.push(suf); return L; })];
-    box(sx, ey, sw, exL, C.excl, {boldFirst: true, fs: 13}); arrow(cx, ey + 34, sx - 2, ey + 34); y = ey + exL.length*lh + 18 + 16; }
+  if(D.excl.length){
+    // caixa do total e, abaixo, uma caixa por motivo, ligadas por um conector
+    const ey = yPrev + 14, hh = box(sx, ey, sw, ['Documentos excluídos na triagem', 'N = ' + fmt(D.exN)], C.excl, {boldFirst: true, fs: 13});
+    arrow(cx, ey + hh/2, sx - 2, ey + hh/2);
+    const rx = sx + 26, rw = sw - 26, lx = sx + 12; let ry = ey + hh + 10, lastMid = ey + hh;
+    D.excl.forEach(e => { const L = [...flowWrap(e.label, 32, 3), 'N = ' + fmt(e.n)], rh = L.length*lh + 18;
+      box(rx, ry, rw, L, C.exclItem, {fs: 13, lastBold: true}); const mid = ry + rh/2;
+      parts.push(`<line x1="${lx}" y1="${lastMid}" x2="${lx}" y2="${mid}" stroke="${C.line}" stroke-width="1.2"/><line x1="${lx}" y1="${mid}" x2="${rx - 2}" y2="${mid}" stroke="${C.line}" stroke-width="1.2" marker-end="url(#flow-arr)"/>`);
+      lastMid = mid; ry += rh + 8; });
+    y = ry + 8; }
   else y = yPrev + 34;
   // 5. incluídos
   arrow(cx, yPrev, cx, y - 2);
@@ -2639,7 +2649,7 @@ function helpContent(key){
       l: 'Registros identificados é a soma do que foi lido em cada arquivo importado. Duplicados são registros com o mesmo DOI ou, na falta dele, o mesmo título e ano, dentro de uma base ou entre bases. Documentos únicos é o corpus em que todas as análises são feitas, como se fosse um único arquivo. Documentos excluídos na triagem são os que você retirou na aba Dados, em Triagem dos documentos, cada um com o seu motivo. Eles saem de todas as análises e aparecem no fluxograma somados por motivo. O campo de exclusões feitas fora da Sala serve para registrar uma triagem feita em outro lugar, com o motivo e o número de documentos.',
       c: 'A triagem feita dentro da Sala retira os documentos das análises e pode ser desfeita. Já as exclusões digitadas no campo de exclusões feitas fora da Sala só aparecem no fluxograma: elas não retiram documentos do corpus. Nesse caso, importe os arquivos já filtrados ou refaça a exclusão na Triagem dos documentos, para que as análises correspondam ao número final. A string de busca pode ter sintaxe diferente em cada base. Registre no método as variações.'};
     if(!D) return Object.assign(base, {p: 'O fluxograma precisa dos resultados recalculados na versão atual da Sala.'});
-    return Object.assign(base, {p: `A busca foi realizada ${D.bases.length > 1 ? 'nas bases' : 'na base'} ${D.bases.map(b => b.name).join(', ').replace(/, ([^,]*)$/, ' e $1')}` + (D.date ? `, em ${D.date}` : '') + (D.query ? `, com a seguinte estratégia: ${D.query}.` : '.') + (D.filters ? ` Filtros aplicados: ${D.filters}.` : '') + ` Foram identificados ${fmt(D.identified)} registros (${D.bases.map(b => b.name + ': ' + fmt(b.n)).join('; ')}). Após a remoção de ${fmt(D.dup)} registros duplicados, identificados pelo mesmo DOI ou pelo mesmo título e ano, restaram ${fmt(D.unique)} documentos únicos.` + (D.rules ? ` Nomes de autores, periódicos e termos foram padronizados (${fmt(D.rules)} correções).` : '') + (D.excl.length ? ` Na triagem foram excluídos ${fmt(D.exN)} documentos (${D.excl.map(e => e.label + ': ' + fmt(e.n)).join('; ')}).` : '') + ` Ao final, ${fmt(D.included)} documentos foram incluídos na análise bibliométrica.`}); }
+    return Object.assign(base, {p: `A busca foi realizada ${D.bases.length > 1 ? 'nas bases' : 'na base'} ${D.bases.map(b => b.name).join(', ').replace(/, ([^,]*)$/, ' e $1')}` + (D.date ? `, em ${D.date}` : '') + (D.query ? `, com a seguinte estratégia: ${D.query}.` : '.') + (D.filters ? ` Filtros aplicados: ${D.filters}.` : '') + ` Foram identificados ${fmt(D.identified)} registros (${D.bases.map(b => b.name + ': ' + fmt(b.n)).join('; ')}). Após a remoção de ${fmt(D.dup)} registros duplicados` + (D.dupManual ? ` (${fmt(D.dupAuto)} identificados automaticamente pelo mesmo DOI ou pelo mesmo título e ano e ${fmt(D.dupManual)} identificados na conferência manual)` : `, identificados pelo mesmo DOI ou pelo mesmo título e ano`) + `, restaram ${fmt(D.unique)} documentos únicos.` + (D.rules ? ` Nomes de autores, periódicos e termos foram padronizados (${fmt(D.rules)} correções).` : '') + (D.excl.length ? ` Na triagem foram excluídos ${fmt(D.exN)} documentos (${D.excl.map(e => e.label + ': ' + fmt(e.n)).join('; ')}).` : '') + ` Ao final, ${fmt(D.included)} documentos foram incluídos na análise bibliométrica.`}); }
   if(key === 'bases'){ const B = R.bases;
     const base = {t: 'Bases de dados do corpus', o: 'Mostra quantos documentos do corpus integrado vieram de cada base e quantos aparecem em mais de uma.',
       l: 'A parte "Só nesta base" são documentos que nenhuma outra base trouxe: é o ganho real de incluir aquela base. A parte "Também em outra base" é a sobreposição. Documentos repetidos são identificados pelo mesmo DOI ou, na falta dele, pelo mesmo título e ano, e contam uma única vez em todas as análises. Quando o mesmo documento vem de duas bases, a Sala mantém um registro e completa os campos vazios com os dados da outra.',
