@@ -388,6 +388,19 @@ table.t th.n{text-align:right}
           <div class="tscroll" style="margin-top:12px"><table class="t" id="t-bases"></table></div>
           <div id="bases-files" style="margin-top:12px"></div>
         </div>
+        <div class="card hidden" id="scr-card">
+          <div class="charthead"><div><h3>Triagem dos documentos</h3><div class="lead">Etapa opcional. Exclua os documentos que não pertencem ao seu estudo e registre o motivo, ou corrija o registro de um documento. As análises são recalculadas na hora, o fluxograma mostra os excluídos por motivo e o arquivo original fica intacto.</div></div><span class="fig-btns"><button class="btn sm" type="button" onclick="scrCSV()">Baixar excluídos (CSV)</button><button class="btn sm" type="button" onclick="scrClear()">Desfazer triagem</button></span></div>
+          <div class="kpis" id="scr-kpis" style="margin-top:12px"></div>
+          <div id="scr-reasons" style="margin:10px 0 4px;max-width:720px"></div>
+          <div style="display:grid;grid-template-columns:minmax(220px,1fr) 190px 190px;gap:12px;margin-top:14px;max-width:900px">
+            <div class="field"><label>Buscar por título, autor, periódico, ano ou DOI</label><input id="scr-q" placeholder="digite parte do título ou do nome" oninput="scrSet('q',this.value)"></div>
+            <div class="field"><label>Mostrar</label><select id="scr-filter" onchange="scrSet('filter',this.value)"><option value="all">Todos</option><option value="in">Incluídos</option><option value="ex">Excluídos</option><option value="ed">Editados</option></select></div>
+            <div class="field"><label>Ordenar por</label><select id="scr-sort" onchange="scrSet('sort',this.value)"><option value="year">Ano, mais recente</option><option value="old">Ano, mais antigo</option><option value="cit">Citações</option><option value="title">Título</option><option value="file">Ordem do arquivo</option></select></div>
+          </div>
+          <div id="scr-bar" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0 8px"></div>
+          <div class="tscroll" id="scr-list" style="max-height:none"></div>
+          <div id="scr-pages" style="display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:10px"></div>
+        </div>
         <div class="card">
           <div class="charthead"><h3>Primeiros registros</h3><span class="small muted" id="preview-count"></span></div>
           <div class="tscroll"><table class="t" id="preview"></table></div>
@@ -436,11 +449,11 @@ table.t th.n{text-align:right}
       <div id="an-body" class="hidden">
         <div class="card"><h3>Visão geral</h3><div class="kpis" id="k-geral"></div></div>
         <div class="card" id="flow-card">
-          <div class="charthead"><h3>Fluxograma do método</h3><span class="fig-btns"><button class="btn sm" type="button" onclick="dlSVG('flowsvg','fluxograma')">Baixar SVG</button><button class="btn sm" type="button" onclick="flowPNG()">Baixar PNG</button></span></div>
+          <div class="charthead"><h3>Fluxograma do método</h3><span class="fig-btns"><button class="btn sm" type="button" onclick="scrGo()">Triagem dos documentos</button><button class="btn sm" type="button" onclick="dlSVG('flowsvg','fluxograma')">Baixar SVG</button><button class="btn sm" type="button" onclick="flowPNG()">Baixar PNG</button></span></div>
           <div class="lead">Da busca ao corpus analisado: bases consultadas, registros identificados, duplicados removidos e documentos incluídos. Os números vêm do que foi importado neste projeto.</div>
           <div class="grid2" style="align-items:start;margin-bottom:12px">
             <div class="field" style="margin:0"><label>Estratégia de busca mostrada no fluxograma</label><textarea id="flow-query" style="min-height:74px" oninput="flowEdit()" placeholder="Por padrão, usa a string salva no Roteiro de busca"></textarea></div>
-            <div class="field" style="margin:0"><label>Exclusões feitas depois, fora da Sala (opcional)</label><textarea id="flow-excl" style="min-height:74px" oninput="flowEdit()" placeholder="Uma por linha, no formato motivo; número&#10;Fora do tema; 120&#10;Sem dados originais; 35"></textarea><label style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer"><input type="checkbox" id="flow-gray" onchange="flowEdit()" style="width:auto">Tons de cinza</label></div>
+            <div class="field" style="margin:0"><label>Exclusões feitas fora da Sala (opcional): motivo; quantidade</label><textarea id="flow-excl" style="min-height:74px" oninput="flowEdit()" placeholder="Uma por linha, no formato motivo; número&#10;Fora do tema; 120&#10;Sem dados originais; 35"></textarea><div id="flow-excl-warn"></div><div class="small muted" style="margin-top:6px">Para excluir documentos aqui dentro, com o motivo de cada um, use a <a href="#" onclick="scrGo();return false">Triagem dos documentos</a>. O fluxograma soma os excluídos por motivo.</div><label style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer"><input type="checkbox" id="flow-gray" onchange="flowEdit()" style="width:auto">Tons de cinza</label></div>
           </div>
           <div id="flow-box" style="overflow-x:auto"></div>
         </div>
@@ -622,7 +635,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.7.1";
+const APP_VERSION = "1.8.0";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -915,7 +928,8 @@ function edCorpusKey(){
   return pid+'#'+(CORPUS.records||[]).length+'#'+(CORPUS.records||[]).slice(0,8).map(r=>String(r.title||'')+'@'+String(r.year||'')).join('|');
 }
 function edResetBase(){ED_BASE=null;ED_BASE_KEY='';}
-function edCaptureBase(){if(typeof CORPUS==='undefined'||!CORPUS)return;const k=edCorpusKey();if(!ED_BASE||ED_BASE_KEY!==k){ED_BASE=edClone(CORPUS.records||[]);ED_BASE_KEY=k;}}
+function edDropBase(){ED_BASE=null;ED_BASE_KEY='';if(typeof CORPUS!=='undefined'&&CORPUS)delete CORPUS.__base;}
+function edCaptureBase(){if(typeof CORPUS==='undefined'||!CORPUS)return;if(!CORPUS.__base)CORPUS.__base=edClone(CORPUS.records||[]);ED_BASE=CORPUS.__base;}
 function edResolve(field,value){const rules=edRuleStore(),row=rules[field]&&rules[field][edNorm(value)];if(row===undefined)return value;if(typeof row==='string')return row;if(row&&typeof row==='object')return row.remove?'':String(row.to??'');return value;}
 function edApplyRecord(rec){
   const r=edClone(rec);
@@ -925,7 +939,18 @@ function edApplyRecord(rec){
   }
   return r;
 }
-function edPrepareCorpus(){if(typeof CORPUS==='undefined'||!CORPUS)return;edCaptureBase();CORPUS.records=(ED_BASE||[]).map(edApplyRecord);}
+function edPrepareCorpus(){
+  if(typeof CORPUS==='undefined'||!CORPUS)return;edCaptureBase();
+  const S=scrStore(),out=[],reasons=new Map();let ex=0,ed=0;
+  for(const b of (ED_BASE||[])){
+    const xk=scrFind(S.ex,b);
+    if(xk!=null){ex++;const why=S.reasons[S.ex[xk]]||'Motivo não informado';reasons.set(why,(reasons.get(why)||0)+1);continue;}
+    const ek=scrFind(S.ed,b);if(ek!=null)ed++;
+    out.push(edApplyRecord(ek!=null?scrApplyEdit(b,S.ed[ek]):b));
+  }
+  CORPUS.records=out;
+  CORPUS.screen={total:(ED_BASE||[]).length,excluded:ex,edited:ed,reasons:[...reasons.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'pt-BR'))};
+}
 function edValues(field){
   if(typeof CORPUS==='undefined'||!CORPUS)return [];
   edCaptureBase();const src=ED_BASE||CORPUS.records||[],cfg=ED_FIELDS[field],m=new Map();if(!cfg)return [];
@@ -1111,6 +1136,7 @@ setTimeout(edInstall,0);
       return;
     }
     CORPUS.format='SciELO';
+    if(CORPUS.__base) CORPUS.records=CORPUS.__base;
     const total=(CORPUS.records||[]).length;
     if(!total) return;
     try{
@@ -1120,7 +1146,7 @@ setTimeout(edInstall,0);
       });
 
       // Após o enriquecimento, refaz a base lógica do editor e reaplica as regras manuais.
-      if(typeof edResetBase==='function') edResetBase();
+      if(typeof edDropBase==='function') edDropBase();
       if(typeof edPrepareCorpus==='function') edPrepareCorpus();
 
       if(typeof ED_RAW_COMPUTE==='function' && ED_RAW_COMPUTE) ED_RAW_COMPUTE();
@@ -1643,10 +1669,12 @@ function renderCorpusUI(){
   }
   const R = CORPUS.records;
   const withAff = R.filter(r => r.countries.length).length, withKw = R.filter(r => r.keywords.length).length, withYear = R.filter(r => r.year).length;
-  $('#corpus-kpis').innerHTML = [[fmt(R.length),'documentos'],[esc(CORPUS.format),'formato'],[fmt(withYear),'com ano'],[fmt(withKw),'com palavras-chave'],[fmt(withAff),'com país identificado'],[fmt(CORPUS.duplicates || 0),'duplicatas removidas']].map(([v,l]) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join('');
-  $('#corpus-fields').innerHTML = '<span class="small muted">Colunas lidas: </span>' + CORPUS.columns.slice(0, 40).map(c => `<span class="pill">${esc(c)}</span>`).join('') + ((CORPUS.duplicateList || []).length ? `<details style="margin-top:10px"><summary class="small" style="cursor:pointer">Ver os ${fmt(CORPUS.duplicates)} registros duplicados removidos</summary><div class="tscroll" style="max-height:260px;margin-top:6px"><table class="t"><thead><tr><th>Título</th><th>Ano</th><th>DOI</th><th>Critério</th></tr></thead><tbody>${CORPUS.duplicateList.map(d => `<tr><td>${esc(cut(String(d.title || ''), 90))}</td><td>${d.year || '–'}</td><td>${esc(d.doi || '')}</td><td>${d.by}</td></tr>`).join('')}</tbody></table></div></details>` : '');
-  $('#preview-count').textContent = 'primeiros 30 de ' + fmt(R.length);
+  $('#corpus-kpis').innerHTML = [[fmt(R.length),'documentos'],[esc(CORPUS.format),'formato'],[fmt(withYear),'com ano'],[fmt(withKw),'com palavras-chave'],[fmt(withAff),'com país identificado'],[fmt(CORPUS.duplicates || 0),'duplicatas removidas'],...(CORPUS.screen && CORPUS.screen.excluded ? [[fmt(CORPUS.screen.excluded),'excluídos na triagem']] : [])].map(([v,l]) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join('');
+  const yw = yearWarning(CORPUS.__base || R);
+  $('#corpus-fields').innerHTML = (yw ? `<div class="msg warn" style="margin:0 0 12px">${esc(yw)}</div>` : '') + '<span class="small muted">Colunas lidas: </span>' + CORPUS.columns.slice(0, 40).map(c => `<span class="pill">${esc(c)}</span>`).join('') + ((CORPUS.duplicateList || []).length ? `<details style="margin-top:10px"><summary class="small" style="cursor:pointer">Ver os ${fmt(CORPUS.duplicates)} registros duplicados removidos</summary><div class="tscroll" style="max-height:260px;margin-top:6px"><table class="t"><thead><tr><th>Título</th><th>Ano</th><th>DOI</th><th>Critério</th></tr></thead><tbody>${CORPUS.duplicateList.map(d => `<tr><td>${esc(cut(String(d.title || ''), 90))}</td><td>${d.year || '–'}</td><td>${esc(d.doi || '')}</td><td>${d.by}</td></tr>`).join('')}</tbody></table></div></details>` : '');
+  $('#preview-count').textContent = 'primeiros 30 de ' + fmt(R.length) + (CORPUS.screen && CORPUS.screen.excluded ? ' incluídos' : '');
   $('#preview').innerHTML = '<thead><tr><th>Ano</th><th>Autores</th><th>Título</th><th>Periódico</th><th class="n">Citações</th></tr></thead><tbody>' + R.slice(0, 30).map(r => `<tr><td>${r.year||'–'}</td><td>${esc(cut(r.authors.join('; '), 60))}</td><td>${esc(cut(r.title, 90))}</td><td>${esc(cut(r.journal, 40))}</td><td class="n">${fmt(r.citations)}</td></tr>`).join('') + '</tbody>';
+  try{ scrRender(); }catch(e){ console.warn('Triagem:', e); }
 }
 async function reloadRaw(){
   if(!PROJ?.file?.path) return;
@@ -1732,7 +1760,7 @@ function computeAll(){
   RESULTS = {
     version: APP_VERSION, computedAt: new Date().toISOString(), format: CORPUS.format,
     summary: {documents: N, yearMin: y0, yearMax: y1, authors: A, journals: journals.length, keywords: keywords.length, countries: countries.length, institutions: institutions.length, totalCitations: totalCit, citPerDoc: N ? totalCit/N : 0, collabIndex: collab, singleAuthored: single, growth, doubling, scp, mcp, withCountry: withC.length, docsPerAuthor: A ? N/A : 0},
-    temporal: perYear, authors: authors.slice(0, 100), journals: journals.slice(0, 100), keywords: keywords.slice(0, 150), kwplus: kwplus.slice(0, 100), areas: areas.slice(0, 60), countries: countries.slice(0, 120), institutions: institutions.slice(0, 100), doctypes: doctypes.slice(0, 20), langs: langs.slice(0, 20), cited, lotka, bradford, zipf, nets, evolution: computeEvolution(R), bases: basesSummary(R), flow: {files: CORPUS.flowFiles || [{base: CORPUS.format, read: N + (CORPUS.duplicates || 0)}], unique: N}
+    temporal: perYear, authors: authors.slice(0, 100), journals: journals.slice(0, 100), keywords: keywords.slice(0, 150), kwplus: kwplus.slice(0, 100), areas: areas.slice(0, 60), countries: countries.slice(0, 120), institutions: institutions.slice(0, 100), doctypes: doctypes.slice(0, 20), langs: langs.slice(0, 20), cited, lotka, bradford, zipf, nets, evolution: computeEvolution(R), bases: basesSummary(R), flow: {files: CORPUS.flowFiles || [{base: CORPUS.format, read: (CORPUS.screen ? CORPUS.screen.total : N) + (CORPUS.duplicates || 0)}], unique: CORPUS.screen ? CORPUS.screen.total : N, screen: CORPUS.screen || null}
   };
 }
 function buildNet(lists, maxNodes){
@@ -2192,6 +2220,213 @@ function renderLinks(){
     `<div class="small muted" style="margin-top:10px">Os links de autores e periódicos abrem uma busca pelo nome. A Sala não sabe qual perfil é o da pessoa: confira a identidade antes de usar, porque nomes abreviados podem corresponder a várias pessoas. O link DOI leva direto ao documento.</div>`;
 }
 
+/* ---------- triagem: excluir documentos com motivo e editar registros ---------- */
+const SCR_REASONS = ['Fora do escopo do tema', 'Tipo de documento não elegível', 'Idioma não elegível', 'Fora do período de análise', 'Texto completo indisponível', 'Duplicata não detectada automaticamente'];
+let SCR_CACHE = null, SCR_CACHE_PID = null, SCR_T = null;
+const SCR_UI = {q: '', filter: 'all', sort: 'year', page: 0, per: 25, sel: new Set()};
+const SCR_HAY = new WeakMap();
+function scrStore(){
+  const pid = (typeof PROJ !== 'undefined' && PROJ && PROJ.id) || '';
+  if(!SCR_CACHE || SCR_CACHE_PID !== pid){
+    let s = null; try{ s = PROJ && PROJ.screening ? JSON.parse(PROJ.screening) : null; }catch(e){ console.warn('Triagem salva inválida:', e); }
+    SCR_CACHE = Object.assign({v: 1, reasons: [], ex: {}, ed: {}}, s && typeof s === 'object' ? s : {});
+    SCR_CACHE_PID = pid; SCR_UI.sel = new Set(); SCR_UI.page = 0; SCR_UI.q = ''; SCR_UI.filter = 'all';
+  }
+  return SCR_CACHE;
+}
+function scrHash(str){ let h1 = 0xdeadbeef, h2 = 0x41c6ce57; for(let i = 0; i < str.length; i++){ const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36); }
+/* Identidade do documento: DOI e, como reserva, título e ano do arquivo original. */
+const SCR_KEYS = new WeakMap();
+function scrKeys(r){
+  const c = SCR_KEYS.get(r); if(c) return c;
+  const doi = String(r.doi || '').toLowerCase().replace(/^https?:\/\/(dx\.)?doi\.org\//, '').trim(), ks = [];
+  if(doi) ks.push('d:' + doi);
+  ks.push('t:' + scrHash(edNorm(r.title) + '|' + (r.year || '')));
+  SCR_KEYS.set(r, ks); return ks;
+}
+function scrFind(map, r){ for(const k of scrKeys(r)) if(Object.prototype.hasOwnProperty.call(map, k)) return k; return null; }
+function scrApplyEdit(b, e){
+  const r = edClone(b);
+  if('t' in e) r.title = String(e.t || '');
+  if('y' in e) r.year = parseInt(e.y) || 0;
+  if('j' in e) r.journal = String(e.j || '').trim().toUpperCase();
+  if('a' in e) r.authors = (e.a || []).slice();
+  if('k' in e) r.keywords = (e.k || []).map(k => String(k).toLowerCase().trim()).filter(Boolean);
+  if('d' in e) r.doi = String(e.d || '');
+  if('dt' in e) r.doctype = String(e.dt || '');
+  return r;
+}
+/* Estado de cada documento do corpus original: incluído, excluído (com motivo) ou editado. */
+function scrRows(){
+  if(typeof CORPUS === 'undefined' || !CORPUS) return [];
+  edCaptureBase(); const S = scrStore();
+  return (ED_BASE || []).map((b, i) => { const xk = scrFind(S.ex, b), ek = scrFind(S.ed, b);
+    return {i, base: b, rec: ek ? scrApplyEdit(b, S.ed[ek]) : b, excluded: xk != null, reason: xk != null ? (S.reasons[S.ex[xk]] || 'Motivo não informado') : '', edited: ek != null}; });
+}
+function scrSummary(){
+  const rows = scrRows(), m = new Map(); let ex = 0, ed = 0;
+  rows.forEach(r => { if(r.excluded){ ex++; m.set(r.reason, (m.get(r.reason) || 0) + 1); } else if(r.edited) ed++; });
+  return {total: rows.length, excluded: ex, edited: ed, reasons: [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR'))};
+}
+async function scrPersist(){
+  if(typeof PROJ === 'undefined' || !PROJ || !PROJ.id) return true;
+  try{ await updateProj({screening: JSON.stringify(scrStore())}); return true; }
+  catch(e){ console.warn('Triagem não salva:', e); toast('A triagem vale nesta sessão, mas não pôde ser salva no projeto: ' + (e.message || e)); return false; }
+}
+async function scrCommit(message){
+  await scrPersist();
+  if(typeof edRecompute === 'function' && ED_RAW_COMPUTE) edRecompute(message); else { computeAll(); renderAll(); renderCorpusUI(); if(message) toast(message); }
+  try{ scrRender(); }catch(e){ console.warn(e); }
+  Promise.resolve(saveResults()).catch(e => console.warn('Falha ao salvar resultados:', e));
+}
+function scrReasonIndex(text){
+  const S = scrStore(), t = String(text || '').replace(/\s+/g, ' ').trim().replace(/[.;:]+$/, '');
+  let i = S.reasons.findIndex(r => edNorm(r) === edNorm(t)); if(i < 0){ S.reasons.push(t); i = S.reasons.length - 1; }
+  return i;
+}
+function scrAskExclude(list){
+  const rows = scrRows(), idx = (list || []).filter(i => rows[i] && !rows[i].excluded);
+  if(!idx.length){ toast('Selecione ao menos um documento incluído.'); return; }
+  const used = scrSummary().reasons.map(r => r[0]), opts = [...new Set([...used, ...SCR_REASONS])];
+  window.__scrPending = idx;
+  openModal(`<h2>Excluir ${idx.length === 1 ? 'documento' : fmt(idx.length) + ' documentos'}</h2>` +
+    (idx.length === 1 ? `<div class="small" style="margin-bottom:12px">${esc(cut(rows[idx[0]].rec.title || '(sem título)', 220))}</div>` : '') +
+    `<div class="field"><label>Motivo da exclusão (obrigatório, aparece no fluxograma)</label><input id="scr-reason" maxlength="90" placeholder="ex.: Fora do escopo do tema" onkeydown="if(event.key==='Enter')scrConfirmExclude()"></div>` +
+    `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">${opts.map(o => `<button class="btn sm" type="button" onclick="document.getElementById('scr-reason').value=decodeURIComponent('${encodeURIComponent(o)}')">${esc(o)}</button>`).join('')}</div>` +
+    `<div class="small muted" style="margin-bottom:14px">O documento sai de todas as análises e o arquivo original não é alterado. A exclusão pode ser desfeita a qualquer momento.</div>` +
+    `<div class="actions"><button class="btn primary" type="button" onclick="scrConfirmExclude()">Excluir e recalcular</button><button class="btn" type="button" onclick="closeModal()">Cancelar</button></div>`);
+  setTimeout(() => document.getElementById('scr-reason')?.focus(), 30);
+}
+async function scrConfirmExclude(){
+  const reason = (document.getElementById('scr-reason')?.value || '').trim();
+  if(reason.length < 3){ toast('Escreva o motivo da exclusão.'); return; }
+  const S = scrStore(), rows = scrRows(), ri = scrReasonIndex(reason), idx = window.__scrPending || [];
+  idx.forEach(i => { const r = rows[i]; if(r) S.ex[scrKeys(r.base)[0]] = ri; });
+  SCR_UI.sel = new Set(); closeModal();
+  await scrCommit(idx.length === 1 ? 'Documento excluído. Análises recalculadas.' : fmt(idx.length) + ' documentos excluídos. Análises recalculadas.');
+}
+async function scrRestore(list){
+  const S = scrStore(), rows = scrRows(); let n = 0;
+  (list || []).forEach(i => { const r = rows[i]; if(!r) return; scrKeys(r.base).forEach(k => { if(Object.prototype.hasOwnProperty.call(S.ex, k)){ delete S.ex[k]; n++; } }); });
+  if(!n){ toast('Nenhum documento excluído na seleção.'); return; }
+  SCR_UI.sel = new Set();
+  await scrCommit('Exclusão desfeita. Análises recalculadas.');
+}
+function scrEdit(i){
+  const r = scrRows()[i]; if(!r) return; const d = r.rec;
+  const f = (id, label, val, extra) => `<div class="field"><label>${label}</label><input id="${id}" value="${esc(val ?? '')}" ${extra || ''}></div>`;
+  openModal(`<h2>Editar documento</h2>` +
+    `<div class="field"><label>Título</label><textarea id="scr-e-t" style="min-height:70px">${esc(d.title || '')}</textarea></div>` +
+    `<div class="grid2">${f('scr-e-y', 'Ano de publicação', d.year || '', 'inputmode="numeric" maxlength="4"')}${f('scr-e-dt', 'Tipo de documento', d.doctype || '')}</div>` +
+    f('scr-e-j', 'Periódico', d.journal || '') +
+    f('scr-e-a', 'Autores (separados por ponto e vírgula)', (d.authors || []).join('; ')) +
+    f('scr-e-k', 'Palavras-chave dos autores (separadas por ponto e vírgula)', (d.keywords || []).join('; ')) +
+    f('scr-e-d', 'DOI', d.doi || '') +
+    `<div class="small muted" style="margin-bottom:14px">A edição vale só para este documento e o arquivo original não é alterado. Para trocar um nome em todos os documentos de uma vez, use Editar nomes e termos.</div>` +
+    `<div class="actions"><button class="btn primary" type="button" onclick="scrSaveEdit(${i})">Salvar e recalcular</button>${r.edited ? `<button class="btn" type="button" onclick="scrUndoEdit(${i})">Voltar ao original</button>` : ''}<button class="btn" type="button" onclick="closeModal()">Cancelar</button></div>`);
+}
+async function scrSaveEdit(i){
+  const r = scrRows()[i]; if(!r) return; const b = r.base, v = id => (document.getElementById(id)?.value || '').replace(/\s+/g, ' ').trim();
+  const list = s => [...new Set(s.split(';').map(x => x.trim()).filter(Boolean))], same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+  const ys = v('scr-e-y'); if(ys && !/^(1[5-9]|20)\d\d$/.test(ys)){ toast('Ano inválido. Use quatro dígitos, por exemplo 2024.'); return; }
+  const title = v('scr-e-t'); if(!title){ toast('O título não pode ficar vazio.'); return; }
+  const e = {}, y = parseInt(ys) || 0, j = v('scr-e-j').toUpperCase(), a = list(v('scr-e-a')), k = list(v('scr-e-k').toLowerCase()), d = v('scr-e-d'), dt = v('scr-e-dt');
+  if(title !== String(b.title || '')) e.t = title;
+  if(y !== (b.year || 0)) e.y = y;
+  if(j !== String(b.journal || '')) e.j = j;
+  if(!same(a, b.authors || [])) e.a = a;
+  if(!same(k, b.keywords || [])) e.k = k;
+  if(d !== String(b.doi || '')) e.d = d;
+  if(dt !== String(b.doctype || '')) e.dt = dt;
+  const S = scrStore(); scrKeys(b).forEach(key => { delete S.ed[key]; });
+  if(Object.keys(e).length) S.ed[scrKeys(b)[0]] = e;
+  closeModal();
+  await scrCommit(Object.keys(e).length ? 'Documento editado. Análises recalculadas.' : 'Nenhuma alteração em relação ao original.');
+}
+async function scrUndoEdit(i){
+  const r = scrRows()[i]; if(!r) return; const S = scrStore(); scrKeys(r.base).forEach(k => { delete S.ed[k]; });
+  closeModal(); await scrCommit('Documento voltou ao registro original.');
+}
+async function scrRenameReason(enc){
+  const S = scrStore(), old = decodeURIComponent(enc), i = S.reasons.findIndex(r => r === old); if(i < 0) return;
+  const t = (prompt('Novo texto do motivo (vale para todos os documentos excluídos por ele):', old) || '').replace(/\s+/g, ' ').trim(); if(!t || t === old) return;
+  const j = S.reasons.findIndex((r, n) => n !== i && edNorm(r) === edNorm(t));
+  if(j >= 0){ Object.keys(S.ex).forEach(k => { if(S.ex[k] === i) S.ex[k] = j; }); } else S.reasons[i] = t;
+  await scrCommit('Motivo atualizado.');
+}
+async function scrClear(){
+  const s = scrSummary(); if(!s.excluded && !s.edited){ toast('Não há exclusões nem edições neste projeto.'); return; }
+  if(!confirm(`Desfazer toda a triagem deste projeto? ${fmt(s.excluded)} documentos excluídos voltam para a análise e ${fmt(s.edited)} edições são descartadas.`)) return;
+  const S = scrStore(); S.ex = {}; S.ed = {}; S.reasons = []; SCR_UI.sel = new Set();
+  await scrCommit('Triagem desfeita. Todos os documentos voltaram para a análise.');
+}
+function scrCSV(){
+  const rows = scrRows().filter(r => r.excluded); if(!rows.length){ toast('Nenhum documento excluído.'); return; }
+  download(new Blob([csvOf([['Título', 'Ano', 'Autores', 'Periódico', 'DOI', 'Base', 'Motivo da exclusão'], ...rows.map(r => [r.rec.title, r.rec.year || '', (r.rec.authors || []).join('; '), r.rec.journal, r.rec.doi || '', (r.rec.sources || []).join(' + '), r.reason])])], {type: 'text/csv;charset=utf-8'}), `${projSlug()}-documentos-excluidos.csv`);
+}
+function scrHay(r){ let h = SCR_HAY.get(r.rec); if(h == null){ const d = r.rec; h = edNorm([d.title, (d.authors || []).join(' '), d.journal, d.year, d.doi, (d.keywords || []).join(' ')].join(' ')); SCR_HAY.set(d, h); } return h; }
+function scrView(){
+  let rows = scrRows(); const q = edNorm(SCR_UI.q), f = SCR_UI.filter;
+  if(f === 'in') rows = rows.filter(r => !r.excluded); else if(f === 'ex') rows = rows.filter(r => r.excluded); else if(f === 'ed') rows = rows.filter(r => r.edited);
+  else if(f.startsWith('r:')) rows = rows.filter(r => r.excluded && r.reason === f.slice(2));
+  if(q){ const parts = q.split(' ').filter(Boolean); rows = rows.filter(r => { const h = scrHay(r); return parts.every(p => h.includes(p)); }); }
+  const s = SCR_UI.sort;
+  rows.sort(s === 'cit' ? (a, b) => (b.rec.citations || 0) - (a.rec.citations || 0) || a.i - b.i : s === 'title' ? (a, b) => String(a.rec.title).localeCompare(String(b.rec.title), 'pt-BR') : s === 'old' ? (a, b) => (a.rec.year || 9999) - (b.rec.year || 9999) || a.i - b.i : s === 'file' ? (a, b) => a.i - b.i : (a, b) => (b.rec.year || 0) - (a.rec.year || 0) || a.i - b.i);
+  return rows;
+}
+function scrSet(key, value){ SCR_UI[key] = value; if(key !== 'page') SCR_UI.page = 0; if(key === 'q'){ clearTimeout(SCR_T); SCR_T = setTimeout(scrRenderList, 180); } else scrRenderList(); }
+function scrToggle(i, on){ if(on) SCR_UI.sel.add(i); else SCR_UI.sel.delete(i); scrRenderBar(); }
+function scrTogglePage(on){ scrPageRows().forEach(r => { if(on) SCR_UI.sel.add(r.i); else SCR_UI.sel.delete(r.i); }); scrRenderList(); }
+function scrSelectAllFiltered(){ scrView().forEach(r => SCR_UI.sel.add(r.i)); scrRenderList(); }
+function scrPageRows(){ const v = scrView(), pages = Math.max(1, Math.ceil(v.length/SCR_UI.per)); SCR_UI.page = Math.min(SCR_UI.page, pages - 1); return v.slice(SCR_UI.page*SCR_UI.per, (SCR_UI.page + 1)*SCR_UI.per); }
+function scrRenderBar(){
+  const el = document.getElementById('scr-bar'); if(!el) return; const n = SCR_UI.sel.size;
+  el.innerHTML = n ? `<span class="small"><b>${fmt(n)}</b> ${n === 1 ? 'selecionado' : 'selecionados'}</span><button class="btn sm danger" type="button" onclick="scrAskExclude([...SCR_UI.sel])">Excluir selecionados</button><button class="btn sm" type="button" onclick="scrRestore([...SCR_UI.sel])">Restaurar selecionados</button><button class="btn sm" type="button" onclick="SCR_UI.sel=new Set();scrRenderList()">Limpar seleção</button>`
+    : `<span class="small muted">Marque documentos para excluir ou restaurar vários de uma vez.</span><button class="btn sm" type="button" onclick="scrSelectAllFiltered()">Selecionar todos os da lista filtrada</button>`;
+}
+function scrRenderList(){
+  const host = document.getElementById('scr-list'); if(!host) return;
+  const all = scrView(), pages = Math.max(1, Math.ceil(all.length/SCR_UI.per)), rows = scrPageRows(), allOn = rows.length && rows.every(r => SCR_UI.sel.has(r.i));
+  host.innerHTML = rows.length ? `<table class="t"><thead><tr><th style="width:34px"><input type="checkbox" ${allOn ? 'checked' : ''} onchange="scrTogglePage(this.checked)" title="Selecionar esta página"></th><th>Ano</th><th>Documento</th><th class="n">Citações</th><th>Situação</th><th style="min-width:150px">Ações</th></tr></thead><tbody>` + rows.map(r => { const d = r.rec;
+    return `<tr${r.excluded ? ' style="background:#fff7ef"' : ''}><td><input type="checkbox" ${SCR_UI.sel.has(r.i) ? 'checked' : ''} onchange="scrToggle(${r.i},this.checked)"></td><td>${d.year || '–'}</td>` +
+      `<td style="min-width:300px"><div style="font-weight:500;${r.excluded ? 'color:#8a6a4a' : ''}">${esc(cut(d.title || '(sem título)', 170))}</div><div class="small muted">${esc(cut((d.authors || []).join('; '), 90))}${d.journal ? ' · ' + esc(cut(d.journal, 60)) : ''}${d.doi ? ` · <a href="https://doi.org/${esc(d.doi)}" target="_blank" rel="noopener">DOI</a>` : ''}</div></td>` +
+      `<td class="n">${fmt(d.citations || 0)}</td><td>${r.excluded ? `<span class="pill" style="border-color:#f0b98a;background:#fff1e3;color:#8a4a10">Excluído: ${esc(cut(r.reason, 60))}</span>` : '<span class="pill" style="border-color:#bfe0cc;background:#eef8f1;color:#1d6b40">Incluído</span>'}${r.edited ? '<span class="pill" style="border-color:#c5dbe4;background:#eef6fb;color:#0c4e64">Editado</span>' : ''}</td>` +
+      `<td style="white-space:nowrap"><button class="btn sm" type="button" onclick="scrEdit(${r.i})">Editar</button> ${r.excluded ? `<button class="btn sm" type="button" onclick="scrRestore([${r.i}])">Restaurar</button>` : `<button class="btn sm danger" type="button" onclick="scrAskExclude([${r.i}])">Excluir</button>`}</td></tr>`; }).join('') + '</tbody></table>'
+    : '<div class="small muted" style="padding:14px 4px">Nenhum documento corresponde à busca ou ao filtro.</div>';
+  const pg = document.getElementById('scr-pages');
+  if(pg) pg.innerHTML = `<span class="small muted">${fmt(all.length)} ${all.length === 1 ? 'documento' : 'documentos'} na lista · página ${SCR_UI.page + 1} de ${fmt(pages)}</span><span style="display:flex;gap:6px"><button class="btn sm" type="button" ${SCR_UI.page <= 0 ? 'disabled' : ''} onclick="scrSet('page',${SCR_UI.page - 1})">Anterior</button><button class="btn sm" type="button" ${SCR_UI.page >= pages - 1 ? 'disabled' : ''} onclick="scrSet('page',${SCR_UI.page + 1})">Próxima</button></span>`;
+  scrRenderBar();
+}
+function scrRender(){
+  const card = document.getElementById('scr-card'); if(!card) return;
+  if(typeof CORPUS === 'undefined' || !CORPUS){ card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  const s = scrSummary();
+  kpis('scr-kpis', [[fmt(s.total), 'documentos únicos'], [fmt(s.excluded), 'excluídos na triagem'], [fmt(s.total - s.excluded), 'incluídos na análise'], [fmt(s.edited), 'editados']]);
+  document.getElementById('scr-reasons').innerHTML = s.reasons.length ? '<b class="small">Motivos de exclusão</b>' + s.reasons.map(([r, n]) => `<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid #edf0f3"><span class="small">${esc(r)} · <b>${fmt(n)}</b></span><span style="display:flex;gap:6px"><button class="btn sm" type="button" onclick="scrSet('filter','r:'+decodeURIComponent('${encodeURIComponent(r)}'));document.getElementById('scr-filter').value='ex'">Ver</button><button class="btn sm" type="button" onclick="scrRenameReason('${encodeURIComponent(r)}')">Renomear</button></span></div>`).join('') : '';
+  const fs = document.getElementById('scr-filter'); if(fs && !SCR_UI.filter.startsWith('r:')) fs.value = SCR_UI.filter;
+  const q = document.getElementById('scr-q'); if(q && document.activeElement !== q) q.value = SCR_UI.q;
+  scrRenderList();
+}
+async function scrGo(){
+  if(typeof PROJ === 'undefined' || !PROJ || !PROJ.id || typeof USER === 'undefined' || !USER) return;
+  showTab('dados');
+  if((typeof CORPUS === 'undefined' || !CORPUS) && PROJ && PROJ.file && PROJ.file.path){ try{ await reloadRaw(); }catch(e){ console.warn(e); } }
+  if(typeof CORPUS === 'undefined' || !CORPUS){ setMsg('data-msg', 'Para fazer a triagem, o arquivo do projeto precisa estar carregado. Importe o arquivo de novo nesta aba. As exclusões e edições já salvas são reaplicadas automaticamente.', 'warn'); return; }
+  setTimeout(() => { scrRender(); document.getElementById('scr-card')?.scrollIntoView({behavior: 'smooth', block: 'start'}); }, 150);
+}
+/* Aviso quando o ano de publicação do arquivo indica exportação parcial da base. */
+function yearWarning(records){
+  const ys = (records || []).map(r => r.year).filter(y => y > 1800), n = ys.length; if(n < 50) return '';
+  const now = new Date().getFullYear(), uniq = new Set(ys), fut = ys.filter(y => y > now).length;
+  const tail = ' A Sala lê o ano direto da coluna de ano do arquivo, sem alterar. Confira no site da base o total de resultados da busca e, se for maior que o número de registros importados, exporte todos os resultados (no Scopus, escolha o intervalo completo na janela de exportação, e não só os primeiros da lista).';
+  if(uniq.size === 1) return `Todos os ${fmt(n)} registros com ano têm o mesmo ano de publicação (${ys[0]}). Isso costuma indicar exportação parcial: a base ordena os resultados do mais recente para o mais antigo e só o começo da lista foi exportado.` + tail;
+  if(fut/n > .5) return `${fmt(fut)} de ${fmt(n)} registros têm ano de publicação posterior a ${now}. Isso costuma indicar exportação parcial, com apenas os resultados mais recentes da busca.` + tail;
+  return '';
+}
+
 /* ---------- fluxograma do método: da busca ao corpus analisado ---------- */
 function flowPrefs(){ try{ return JSON.parse(localStorage.getItem('sala-fluxo-' + ((PROJ && PROJ.id) || 'x')) || '{}') || {}; }catch(e){ return {}; } }
 function flowSavePrefs(p){ try{ localStorage.setItem('sala-fluxo-' + ((PROJ && PROJ.id) || 'x'), JSON.stringify(p)); }catch(e){} }
@@ -2208,10 +2443,14 @@ function flowData(){
   const P = flowPrefs(), pr = (PROJ && PROJ.protocol) || {};
   const byBase = new Map(); F.files.forEach(f => byBase.set(f.base, (byBase.get(f.base) || 0) + f.read));
   const bases = [...byBase.entries()].map(([name, n]) => ({name, n})), identified = bases.reduce((s,b) => s + b.n, 0), unique = F.unique, dup = Math.max(0, identified - unique);
-  const excl = String(P.excl || '').split('\n').map(l => { const m = /^(.*?)[;:\t]\s*(\d+)\s*$/.exec(l.trim()); return m ? {label: m[1].trim(), n: +m[2]} : null; }).filter(x => x && x.label && x.n > 0);
+  const manualLines = String(P.excl || '').split('\n').map(l => l.trim()).filter(Boolean);
+  const manual = manualLines.map(l => { const m = /^(.*?)[;:\t]\s*(\d[\d.]*)\s*$/.exec(l); return m ? {label: m[1].replace(/[;:]+$/, '').trim(), n: +m[2].replace(/\./g, '')} : null; });
+  const ignored = manualLines.filter((l, i) => !manual[i] || !manual[i].label || !(manual[i].n > 0));
+  const scr = F.screen || {excluded: 0, edited: 0, reasons: []};
+  const excl = [...(scr.reasons || []).map(([label, n]) => ({label, n})), ...manual.filter(x => x && x.label && x.n > 0)];
   const exN = excl.reduce((s,x) => s + x.n, 0), rules = PROJ && PROJ.normalizationRules ? Object.entries(PROJ.normalizationRules).filter(([k]) => k !== '__ignore').reduce((s, [,v]) => s + Object.keys(v || {}).length, 0) : 0;
-  return {query: (P.query != null && P.query !== '') ? P.query : (pr.query || ''), date: pr.date || '', filters: pr.filters || '', bases, identified, dup, unique, excl, exN, included: Math.max(0, unique - exN), rules, gray: !!P.gray,
-    period: RESULTS.summary.yearMin == null ? '' : RESULTS.summary.yearMin + ' a ' + RESULTS.summary.yearMax};
+  return {query: (P.query != null && P.query !== '') ? P.query : (pr.query || ''), date: pr.date || '', filters: pr.filters || '', bases, identified, dup, unique, excl, exN, included: Math.max(0, unique - exN), rules, gray: !!P.gray, ignored, inSala: scr.excluded || 0, edited: scr.edited || 0,
+    period: RESULTS.summary.yearMin == null ? '' : RESULTS.summary.yearMin === RESULTS.summary.yearMax ? String(RESULTS.summary.yearMin) : RESULTS.summary.yearMin + ' a ' + RESULTS.summary.yearMax};
 }
 function renderFlow(){
   const host = document.getElementById('flow-box'); if(!host || !RESULTS) return;
@@ -2220,6 +2459,7 @@ function renderFlow(){
   if(ex && document.activeElement !== ex) ex.value = P.excl || '';
   if(gr) gr.checked = !!P.gray;
   const D = flowData();
+  const fw = document.getElementById('flow-excl-warn'); if(fw) fw.innerHTML = D && D.ignored.length ? '<div class="msg warn" style="margin:8px 0 0">' + (D.ignored.length === 1 ? 'Linha ignorada por falta do número' : 'Linhas ignoradas por falta do número') + ': ' + D.ignored.map(l => esc(cut(l, 40))).join(' | ') + '. Escreva o motivo e a quantidade, por exemplo: Fora do tema; 120</div>' : '';
   if(!D){ host.innerHTML = '<div class="msg info">O fluxograma precisa dos resultados recalculados na versão atual da Sala. Use o botão Recalcular agora, no alto desta aba.</div>'; return; }
   const C = D.gray ? {search: '#f1f3f5', base: '#ffffff', id: '#ffffff', dup: '#dfe3e8', uniq: '#ffffff', rule: '#f1f3f5', excl: '#cfd4da', inc: '#e9ecef', an: '#f8f9fa', line: '#333', text: '#111'}
                    : {search: '#eef6fb', base: '#ffffff', id: '#ffffff', dup: '#bcd9f2', uniq: '#ffffff', rule: '#e8f3ec', excl: '#f6c9a3', inc: '#ffd54a', an: '#f6f8fa', line: '#1a2332', text: '#1a2332'};
@@ -2252,7 +2492,7 @@ function renderFlow(){
   // padronização (à esquerda)
   if(D.rules){ const ry = y; box(40, ry, 250, ['Padronização de nomes e termos', fmt(D.rules) + ' correções aplicadas'], C.rule, {boldFirst: true, fs: 13}); parts.push(`<line x1="${40 + 250}" y1="${ry + 28}" x2="${mx}" y2="${ry + 28}" stroke="${C.line}" stroke-width="1.2" stroke-dasharray="4 3"/>`); }
   // exclusões posteriores (à direita)
-  if(D.excl.length){ let ey = yPrev + 14; const exL = ['Excluídos após a triagem', 'N = ' + fmt(D.exN), ...D.excl.flatMap(e => flowWrap(e.label + ' (N = ' + fmt(e.n) + ')', 34, 2))];
+  if(D.excl.length){ let ey = yPrev + 14; const exL = ['Documentos excluídos na triagem', 'N = ' + fmt(D.exN), ...D.excl.flatMap(e => { const L = flowWrap(e.label, 34, 3), suf = '(N = ' + fmt(e.n) + ')'; if((L[L.length-1] + ' ' + suf).length <= 36) L[L.length-1] += ' ' + suf; else L.push(suf); return L; })];
     box(sx, ey, sw, exL, C.excl, {boldFirst: true, fs: 13}); arrow(cx, ey + 34, sx - 2, ey + 34); y = ey + exL.length*lh + 18 + 16; }
   else y = yPrev + 34;
   // 5. incluídos
@@ -2294,8 +2534,8 @@ function helpContent(key){
     return Object.assign(base, {p: `A produção anual de ${X.y0} a ${X.y1} foi ajustada por mínimos quadrados a quatro modelos: linear, exponencial, logarítmico e polinomial de segundo grau. ${X.sel === X.best ? 'O melhor ajuste, pelo R² ajustado, foi o modelo' : 'Para a interpretação foi adotado o modelo'} ${X.sel.label.toLowerCase()} (R² = ${fmt2(X.sel.r2)}; R² ajustado = ${fmt2(X.sel.adj)}; p ${fmtP(X.sel.pval).startsWith('<') ? fmtP(X.sel.pval) : '= ' + fmtP(X.sel.pval)}, teste F da regressão)` + (X.sel.r2 < .5 ? '. O ajuste foi fraco, o que indica produção oscilante, sem tendência definida' : `, o que indica ${X.shape}`) + `. O pico de produção ocorreu em ${X.peakYear}, com ${fmt(X.peak)} documentos. Considerando os anos consecutivos com pelo menos 50% da produção do pico, o tema ` + (X.stillHot ? `está em alta desde ${X.hotFrom}` : `esteve em alta ${X.hotFrom === X.hotTo ? 'em ' + X.hotFrom : 'de ' + X.hotFrom + ' a ' + X.hotTo}`) + `. Nos últimos ${X.recentWindow} anos completos, a variação média foi de ${X.recentSlope >= 0 ? '+' : '-'}${fmt1(Math.abs(X.recentSlope))} documentos por ano, o que caracteriza ${X.recent === 'up' ? 'ascensão' : X.recent === 'down' ? 'declínio' : 'estabilidade'}.`}); }
   if(key === 'flow'){ const D = flowData();
     const base = {t: 'Fluxograma do método', o: 'Resume o caminho da busca até o corpus analisado: estratégia de busca, bases consultadas, registros identificados, duplicados removidos e documentos incluídos.',
-      l: 'Registros identificados é a soma do que foi lido em cada arquivo importado. Duplicados são registros com o mesmo DOI ou, na falta dele, o mesmo título e ano, dentro de uma base ou entre bases. Documentos únicos é o corpus em que todas as análises são feitas, como se fosse um único arquivo. O campo de exclusões serve para registrar a triagem feita fora da Sala, com o motivo e o número de documentos.',
-      c: 'As exclusões digitadas só aparecem no fluxograma: elas não retiram documentos do corpus. Se você excluiu documentos na triagem, importe na Sala os arquivos já filtrados para que as análises correspondam ao número final. A string de busca pode ter sintaxe diferente em cada base. Registre no método as variações.'};
+      l: 'Registros identificados é a soma do que foi lido em cada arquivo importado. Duplicados são registros com o mesmo DOI ou, na falta dele, o mesmo título e ano, dentro de uma base ou entre bases. Documentos únicos é o corpus em que todas as análises são feitas, como se fosse um único arquivo. Documentos excluídos na triagem são os que você retirou na aba Dados, em Triagem dos documentos, cada um com o seu motivo. Eles saem de todas as análises e aparecem no fluxograma somados por motivo. O campo de exclusões feitas fora da Sala serve para registrar uma triagem feita em outro lugar, com o motivo e o número de documentos.',
+      c: 'A triagem feita dentro da Sala retira os documentos das análises e pode ser desfeita. Já as exclusões digitadas no campo de exclusões feitas fora da Sala só aparecem no fluxograma: elas não retiram documentos do corpus. Nesse caso, importe os arquivos já filtrados ou refaça a exclusão na Triagem dos documentos, para que as análises correspondam ao número final. A string de busca pode ter sintaxe diferente em cada base. Registre no método as variações.'};
     if(!D) return Object.assign(base, {p: 'O fluxograma precisa dos resultados recalculados na versão atual da Sala.'});
     return Object.assign(base, {p: `A busca foi realizada ${D.bases.length > 1 ? 'nas bases' : 'na base'} ${D.bases.map(b => b.name).join(', ').replace(/, ([^,]*)$/, ' e $1')}` + (D.date ? `, em ${D.date}` : '') + (D.query ? `, com a seguinte estratégia: ${D.query}.` : '.') + (D.filters ? ` Filtros aplicados: ${D.filters}.` : '') + ` Foram identificados ${fmt(D.identified)} registros (${D.bases.map(b => b.name + ': ' + fmt(b.n)).join('; ')}). Após a remoção de ${fmt(D.dup)} registros duplicados, identificados pelo mesmo DOI ou pelo mesmo título e ano, restaram ${fmt(D.unique)} documentos únicos.` + (D.rules ? ` Nomes de autores, periódicos e termos foram padronizados (${fmt(D.rules)} correções).` : '') + (D.excl.length ? ` Na triagem foram excluídos ${fmt(D.exN)} documentos (${D.excl.map(e => e.label + ': ' + fmt(e.n)).join('; ')}).` : '') + ` Ao final, ${fmt(D.included)} documentos foram incluídos na análise bibliométrica.`}); }
   if(key === 'bases'){ const B = R.bases;
@@ -2363,7 +2603,7 @@ function staleBanner(){
   const stale = typeof PROJ !== 'undefined' && PROJ && PROJ.id && RESULTS && RESULTS.version !== APP_VERSION;
   if(!stale){ if(el) el.remove(); return; }
   if(!el){ el = document.createElement('div'); el.id = 'stale-msg'; host.prepend(el); }
-  el.innerHTML = `<div class="msg warn" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:space-between"><span>Estes resultados foram calculados na versão ${esc(RESULTS.version || 'anterior')} da Sala. A versão ${APP_VERSION} corrige a leitura de países, autores e duplicatas. Recalcule para atualizar os números.</span><button class="btn sm primary" type="button" onclick="staleRecalc()">Recalcular agora</button></div>`;
+  el.innerHTML = `<div class="msg warn" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:space-between"><span>Estes resultados foram calculados na versão ${esc(RESULTS.version || 'anterior')} da Sala. A versão ${APP_VERSION} traz a triagem de documentos, com motivo de exclusão no fluxograma. Recalcule para atualizar os números.</span><button class="btn sm primary" type="button" onclick="staleRecalc()">Recalcular agora</button></div>`;
 }
 async function staleRecalc(){
   if(CORPUS){ computeAll(); renderAll(); saveResults(true); toast('Resultados recalculados'); return; }
@@ -2396,7 +2636,7 @@ function renderAll(){
   mkChart('ch-temporal', 'bar', {labels: T.map(t => t[0]), datasets: [{type: 'bar', label: 'Documentos por ano', data: T.map(t => t[1]), backgroundColor: PAL[0], yAxisID: 'y', borderRadius: 2}, {type: 'line', label: 'Acumulado', data: cumArr, borderColor: PAL[1], backgroundColor: PAL[1], yAxisID: 'y2', pointRadius: 2, borderWidth: 2, tension: 0}]},
     {plugins: {legend: {display: true, position: 'bottom'}}, scales: {x: Object.assign({title: {display: true, text: 'Ano'}}, AX, {grid: {display: false}}), y: Object.assign({beginAtZero: true, title: {display: true, text: 'Documentos'}}, AX), y2: Object.assign({beginAtZero: true, position: 'right', title: {display: true, text: 'Acumulado'}}, AX, {grid: {display: false}})}});
   const peak = [...T].sort((a,b) => b[1]-a[1])[0] || null;
-  $('#i-temporal').innerHTML = `Produção de <b>${fmt(S.documents)} documentos</b>` + (peak ? ` entre ${S.yearMin} e ${S.yearMax}, com pico de ${fmt(peak[1])} em ${peak[0]}. ` : ', sem ano de publicação identificado. ') + (S.growth == null ? 'Série curta demais para estimar taxa de crescimento.' : `Taxa composta de crescimento anual de <b>${fmt1(S.growth)}%</b> entre o primeiro e o último ano completo` + (S.doubling ? `, o que corresponde a um tempo de duplicação de ${fmt1(S.doubling)} anos.` : '.'));
+  $('#i-temporal').innerHTML = `Produção de <b>${fmt(S.documents)} documentos</b>` + (peak ? (S.yearMin === S.yearMax ? `, todos com ano de publicação ${S.yearMin}. ` : ` entre ${S.yearMin} e ${S.yearMax}, com pico de ${fmt(peak[1])} em ${peak[0]}. `) : ', sem ano de publicação identificado. ') + (S.yearMin != null && S.yearMin === S.yearMax && S.documents >= 50 ? 'Um corpus inteiro em um único ano costuma indicar exportação parcial da base, só com os resultados mais recentes. Confira o total de resultados da busca e exporte todos. ' : '') + (S.growth == null ? 'Série curta demais para estimar taxa de crescimento.' : `Taxa composta de crescimento anual de <b>${fmt1(S.growth)}%</b> entre o primeiro e o último ano completo` + (S.doubling ? `, o que corresponde a um tempo de duplicação de ${fmt1(S.doubling)} anos.` : '.'));
 
   try{ renderFlow(); }catch(e){ console.warn('Fluxograma:', e); }
   try{ renderBasesChart(); }catch(e){ console.warn('Bases:', e); }
