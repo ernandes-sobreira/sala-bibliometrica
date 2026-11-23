@@ -330,16 +330,19 @@ table.t th.n{text-align:right}
             <div id="syntaxHelp" style="margin:8px 0"></div>
             <div class="code" id="example"></div>
             <div class="actions"><button class="btn sm" onclick="copyText('example')">Copiar exemplo</button></div>
+            <div id="base-rules" style="margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:#fff"></div>
             <div class="msg info" id="builderNote" style="margin-top:14px"></div>
           </div>
           <div>
             <h3>Montar a string</h3>
-            <div class="lead">Sinônimos separados por ponto e vírgula. Cada bloco é um conceito.</div>
+            <div class="lead">Sinônimos separados por ponto e vírgula. Cada bloco é um conceito. Expressões com mais de uma palavra ganham aspas sozinhas. Use * para variar o final da palavra, como articl* (article, articles, articulated).</div>
             <div class="field"><label>Conceito 1</label><input id="c1" placeholder="climate change; global warming; climat*"></div>
             <div class="field"><label>Conceito 2</label><input id="c2" placeholder="worker*; occupational health"></div>
             <div class="field"><label>Conceito 3 (opcional)</label><input id="c3" placeholder="adaptation; risk*"></div>
             <div class="code" id="generated">A string gerada aparecerá aqui.</div>
             <div class="actions"><button class="btn sm" onclick="copyText('generated')">Copiar string</button><button class="btn sm" onclick="useGenerated()">Usar no protocolo</button></div>
+            <div id="term-notes"></div>
+            <div id="all-strings" style="margin-top:16px"></div>
           </div>
         </div>
       </div>
@@ -636,7 +639,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.10.0";
+const APP_VERSION = "1.11.0";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -867,7 +870,7 @@ function renderBase(){
   $('#example').textContent = d.example; $('#builderNote').textContent = d.note;
   const ck = PROJ?.checklist?.[curBase] || {};
   $('#checklist').innerHTML = d.steps.map((s,i) => `<div class="check"><input type="checkbox" id="ck${i}" ${ck[i]?'checked':''} onchange="toggleCheck(${i},this.checked)"><label for="ck${i}">${esc(s[0])}<small>${esc(s[1])}</small></label></div>`).join('');
-  generate(); updateProgress();
+  renderRules(); generate(); updateProgress();
 }
 function toggleCheck(i, v){
   if(!PROJ){ toast('Abra um projeto para salvar o progresso'); return; }
@@ -879,19 +882,60 @@ function updateProgress(){
   const done = d.steps.filter((_,i) => ck[i]).length;
   $('#progBar').style.width = Math.round(done / d.steps.length * 100) + '%';
 }
-function qterms(v){ return v.split(';').map(x => x.trim()).filter(Boolean); }
-function quoteIfNeeded(t){ if(t.includes('*') || t.includes('?')) return t; if(/\s/.test(t) && !(t.startsWith('"') && t.endsWith('"'))) return `"${t}"`; return t; }
+/* Regras de escrita de cada base, conferidas nas páginas de ajuda oficiais e em guias de bibliotecas universitárias. */
+const BASE_RULES = {
+  wos: ['O plural e as variações de grafia entram sozinhos no campo Topic (lematização): article já encontra articles.',
+        '* troca qualquer número de letras: forest* acha forest, forests, forestry.',
+        '? troca exatamente uma letra e $ troca zero ou uma: wom?n acha woman e women.',
+        'Escreva pelo menos 3 letras antes do *.',
+        'Quando você usa *, ?, ou $, a lematização desliga naquele termo.',
+        'Aspas buscam a expressão na ordem exata: "climate change".'],
+  scopus: ['O plural entra sozinho: article já encontra articles, e criterion acha criteria.',
+        '* troca zero ou mais letras: forest* acha forest, forests, forestry.',
+        '? troca exatamente uma letra: wom?n acha woman e women.',
+        'Aspas fazem frase flexível: aceitam plural e *, como "wind turbine*".',
+        'Chaves fazem frase exata, sem plural e sem *: {heart attack} não acha heart attacks.'],
+  pubmed: ['* troca zero ou mais letras e precisa de pelo menos 4 letras antes: child* acha child e children.',
+        'O * pode ficar no meio e dentro de frase: "breast feed*" ou colo*r.',
+        'O PubMed não tem o ? para uma letra só.',
+        'Termo com * não é ligado ao vocabulário MeSH; combine com o descritor [mh] quando existir.',
+        'Escreva AND, OR e NOT em maiúsculas.'],
+  scielo: ['Escreva os termos em português, inglês e espanhol, porque a coleção é multilíngue.',
+        'Aspas buscam a expressão: "mudanças climáticas".',
+        'Confira o truncamento na própria busca: se clima* não trouxer resultado, escreva as variações com OR (clima OR climas OR climático).']
+};
+const WILD_MIN = {wos: 3, scopus: 1, pubmed: 4, scielo: 1};
+function qterms(v){ return v.split(/[;\n]/).map(x => x.trim().replace(/^[,\s]+|[,\s]+$/g, '')).filter(Boolean); }
+function quoteIfNeeded(t){ t = t.replace(/[“”]/g, '"'); if(/^\{.*\}$/.test(t)) return t; if(/\s/.test(t) && !(t.startsWith('"') && t.endsWith('"'))) return `"${t}"`; return t; }
 function group(v){ return qterms(v).map(quoteIfNeeded).join(' OR '); }
-function generate(){
-  const groups = ['c1','c2','c3'].map(id => group($('#'+id).value)).filter(Boolean);
-  if(!groups.length){ $('#generated').textContent = 'A string gerada aparecerá aqui.'; return; }
-  let out = '';
-  if(curBase === 'wos') out = 'TS=(' + groups.map(x => '(' + x + ')').join(' AND ') + ')';
-  else if(curBase === 'scopus') out = 'TITLE-ABS-KEY(' + groups.map(x => '(' + x + ')').join(' AND ') + ')';
-  else if(curBase === 'scielo') out = groups.map(x => 'subject:(' + x + ')').join(' AND ');
-  else out = groups.map(x => '(' + x.split(' OR ').map(t => `${t}[tiab]`).join(' OR ') + ')').join(' AND ');
-  $('#generated').textContent = out;
+function buildFor(base, groups){
+  if(base === 'wos') return 'TS=(' + groups.map(x => '(' + x.map(t => t.replace(/^\{(.*)\}$/, '"$1"')).join(' OR ') + ')').join(' AND ') + ')';
+  if(base === 'scopus') return 'TITLE-ABS-KEY(' + groups.map(x => '(' + x.join(' OR ') + ')').join(' AND ') + ')';
+  if(base === 'scielo') return groups.map(x => 'subject:(' + x.map(t => t.replace(/^\{(.*)\}$/, '"$1"')).join(' OR ') + ')').join(' AND ');
+  return groups.map(x => '(' + x.map(t => t.replace(/^\{(.*)\}$/, '"$1"') + '[tiab]').join(' OR ') + ')').join(' AND ');
 }
+/* Avisos sobre cada termo, de acordo com a base escolhida. */
+function termNotes(base, raw){
+  const out = [], t = raw.replace(/^"|"$/g, '').replace(/^\{|\}$/g, ''), words = t.split(/\s+/);
+  words.forEach(w => { const i = w.search(/[*?$]/), j = w.indexOf('*'); if(i >= 0 && i < WILD_MIN[base]) out.push(`${w}: a base pede pelo menos ${WILD_MIN[base]} letras antes do curinga.`);
+    else if(j >= 0 && j <= 3) out.push(`${w}: raiz curta, pode trazer palavras sem relação. Confira os primeiros resultados.`); });
+  if(base === 'pubmed' && /\?|\$/.test(t)) out.push(`${t}: o PubMed não aceita ? nem $. Use * ou escreva as variações com OR.`);
+  if(base === 'scopus' && /\$/.test(t)) out.push(`${t}: o Scopus não usa $. Use ? para uma letra ou * para várias.`);
+  if(/^\{.*\}$/.test(raw) && /[*?$]/.test(raw)) out.push(`${raw}: frase exata entre chaves não aceita curinga. Use aspas.`);
+  if(/^\{.*\}$/.test(raw) && base !== 'scopus') out.push(`${raw}: chaves só existem no Scopus. Nas outras bases a Sala troca por aspas.`);
+  if((base === 'wos' || base === 'scopus') && !/[*?$]/.test(t) && /[a-z]{3,}s$/i.test(words[words.length - 1]) && !/(ss|us|is)$/i.test(words[words.length - 1])) out.push(`${t}: se for plural, o singular basta, porque nesta base o plural entra sozinho.`);
+  return out;
+}
+function generate(){
+  const groups = ['c1','c2','c3'].map(id => qterms($('#'+id).value).map(quoteIfNeeded)).filter(g => g.length);
+  const all = document.getElementById('all-strings'), notes = document.getElementById('term-notes');
+  if(!groups.length){ $('#generated').textContent = 'A string gerada aparecerá aqui.'; if(all) all.innerHTML = ''; if(notes) notes.innerHTML = ''; return; }
+  $('#generated').textContent = buildFor(curBase, groups);
+  if(notes){ const n = [...new Set(groups.flat().flatMap(t => termNotes(curBase, t)))];
+    notes.innerHTML = n.length ? `<div class="msg warn" style="margin:10px 0 0"><b>Confira antes de usar no ${esc(BASES[curBase].title)}</b><br>${n.map(esc).join('<br>')}</div>` : `<div class="msg ok" style="margin:10px 0 0">Nenhum problema de escrita encontrado para o ${esc(BASES[curBase].title)}.</div>`; }
+  if(all) all.innerHTML = '<b class="small">A mesma busca escrita para cada base</b>' + Object.keys(BASES).map(k => `<div style="margin-top:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><span class="small"><b>${esc(BASES[k].title)}</b></span><button class="btn sm" type="button" onclick="copyText('str-${k}')">Copiar</button></div><div class="code" id="str-${k}" style="margin-top:4px">${esc(buildFor(k, groups))}</div></div>`).join('');
+}
+function renderRules(){ const el = document.getElementById('base-rules'); if(!el) return; el.innerHTML = `<b class="small">Regras de escrita no ${esc(BASES[curBase].title)}</b><ul style="margin:6px 0 0 18px;padding:0;font-size:13.5px;line-height:1.55">${(BASE_RULES[curBase] || []).map(r => `<li>${esc(r)}</li>`).join('')}</ul>`; }
 function useGenerated(){ const g = $('#generated').textContent; if(g.startsWith('A string')) return; $('#pr-query').value = g; toast('String copiada para o protocolo'); }
 function renderProtocol(){
   const p = PROJ?.protocol || {};
