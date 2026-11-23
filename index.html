@@ -335,13 +335,17 @@ table.t th.n{text-align:right}
           </div>
           <div>
             <h3>Montar a string</h3>
-            <div class="lead">Sinônimos separados por ponto e vírgula. Cada bloco é um conceito. Expressões com mais de uma palavra ganham aspas sozinhas. Use * para variar o final da palavra, como articl* (article, articles, articulated).</div>
-            <div class="field"><label>Conceito 1</label><input id="c1" placeholder="climate change; global warming; climat*"></div>
-            <div class="field"><label>Conceito 2</label><input id="c2" placeholder="worker*; occupational health"></div>
-            <div class="field"><label>Conceito 3 (opcional)</label><input id="c3" placeholder="adaptation; risk*"></div>
+            <div class="lead">Cada conceito é uma ideia da sua pergunta. Dentro de um conceito, escreva quantos sinônimos quiser, separados por ponto e vírgula: wetland; wet land; floodplain. Os conceitos são ligados por AND e os sinônimos por OR. Expressões com mais de uma palavra ganham aspas sozinhas.</div>
+            <div id="concepts">
+              <div class="field"><label>Conceito 1</label><input class="concept" id="c1" oninput="conceptChanged()" placeholder="climate change; global warming; climat*"><div class="concept-chips"></div></div>
+              <div class="field"><label>Conceito 2</label><input class="concept" id="c2" oninput="conceptChanged()" placeholder="worker*; occupational health"><div class="concept-chips"></div></div>
+              <div class="field"><label>Conceito 3 (opcional)</label><input class="concept" id="c3" oninput="conceptChanged()" placeholder="adaptation; risk*"><div class="concept-chips"></div></div>
+            </div>
+            <button class="btn sm" type="button" id="concept-add" onclick="conceptAdd()" style="margin-bottom:12px">+ Adicionar conceito</button>
             <div class="code" id="generated">A string gerada aparecerá aqui.</div>
             <div class="actions"><button class="btn sm" onclick="copyText('generated')">Copiar string</button><button class="btn sm" onclick="useGenerated()">Usar no protocolo</button></div>
             <div id="term-notes"></div>
+            <div id="term-variants" style="margin-top:14px"></div>
             <div id="all-strings" style="margin-top:16px"></div>
           </div>
         </div>
@@ -639,7 +643,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.11.0";
+const APP_VERSION = "1.12.0";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -753,7 +757,7 @@ function showScreen(id){ ['screen-login','screen-app','screen-shared'].forEach(s
 window.addEventListener('DOMContentLoaded', async () => {
   const shareToken = new URLSearchParams(location.search).get('share');
   const ok = initFirebase();
-  buildBases(); ['c1','c2','c3'].forEach(id => $('#'+id).addEventListener('input', generate));
+  buildBases();
   $$('#nav button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
   setupDrop(); heroNet();
   if(!ok) return;
@@ -882,6 +886,97 @@ function updateProgress(){
   const done = d.steps.filter((_,i) => ck[i]).length;
   $('#progBar').style.width = Math.round(done / d.steps.length * 100) + '%';
 }
+/* ---------- conceitos da busca: blocos extras, termos visíveis e variações sugeridas ---------- */
+const CONCEPT_MAX = 8;
+function conceptInputs(){ return [...document.querySelectorAll('#concepts input.concept')]; }
+function conceptKey(){ return 'sala-conceitos-' + ((typeof PROJ !== 'undefined' && PROJ && PROJ.id) || 'x'); }
+function conceptSave(){ try{ localStorage.setItem(conceptKey(), JSON.stringify(conceptInputs().map(i => i.value))); }catch(e){} }
+function conceptLoad(){
+  let v = null; try{ v = JSON.parse(localStorage.getItem(conceptKey()) || 'null'); }catch(e){}
+  document.querySelectorAll('#concepts .concept-extra').forEach(el => el.remove());
+  const base = conceptInputs(); base.forEach((inp, i) => { inp.value = v && v[i] != null ? v[i] : ''; });
+  if(v && v.length > 3) v.slice(3).forEach(x => conceptAdd(x, true));
+  conceptChips(); generate();
+}
+function conceptAdd(value, silent){
+  const n = conceptInputs().length; if(n >= CONCEPT_MAX){ toast('Até ' + CONCEPT_MAX + ' conceitos.'); return; }
+  const wrap = document.createElement('div'); wrap.className = 'field concept-extra';
+  wrap.innerHTML = `<label style="display:flex;justify-content:space-between;align-items:center">Conceito ${n + 1} (opcional)<button class="btn sm" type="button" style="padding:2px 8px" onclick="this.closest('.concept-extra').remove();conceptRenumber();conceptSave();generate()">Remover</button></label><input class="concept" id="c${n + 1}" oninput="conceptChanged()" placeholder="termo; outro termo"><div class="concept-chips"></div>`;
+  document.getElementById('concepts').appendChild(wrap);
+  wrap.querySelector('input').value = value || '';
+  if(!silent){ conceptSave(); wrap.querySelector('input').focus(); }
+  conceptRenumber(); conceptChips(); generate();
+}
+function conceptRenumber(){ conceptInputs().forEach((inp, i) => { const l = inp.closest('.field').querySelector('label'); if(l && i >= 3) l.firstChild.textContent = `Conceito ${i + 1} (opcional)`; }); const b = document.getElementById('concept-add'); if(b) b.disabled = conceptInputs().length >= CONCEPT_MAX; }
+function conceptChanged(){ conceptChips(); conceptSave(); generate(); }
+function conceptChips(){
+  conceptInputs().forEach(inp => { const box = inp.parentNode.querySelector('.concept-chips'); if(!box) return; const t = qterms(inp.value).map(quoteIfNeeded);
+    box.innerHTML = t.length ? t.map(x => `<span class="pill" style="background:#f3f8fb;border-color:#c5dbe4;color:#0c4e64">${esc(x)}</span>`).join('') + `<span class="small muted"> ${t.length} ${t.length === 1 ? 'termo' : 'termos'} ligados por OR</span>` : ''; });
+}
+function conceptAppend(idx, term){
+  const inp = conceptInputs()[idx]; if(!inp) return; const cur = qterms(inp.value);
+  if(cur.some(x => edNorm(x) === edNorm(term))){ toast('Esse termo já está no conceito.'); return; }
+  inp.value = [...cur, term].join('; '); conceptChanged(); toast('Incluído: ' + term);
+}
+/* Índice de formas presentes nos títulos e palavras-chave do corpus do projeto, quando houver. */
+let VAR_IDX = null, VAR_IDX_SIG = '';
+function singular(w){ if(/ies$/.test(w)) return w.slice(0, -3) + 'y'; if(/(sses|shes|ches|xes|ses)$/.test(w)) return w.slice(0, -2); if(/[^su]s$/.test(w)) return w.slice(0, -1); return w; }
+function varIndex(){
+  if(typeof CORPUS === 'undefined' || !CORPUS) return null;
+  const recs = CORPUS.__base || CORPUS.records || [], sig = recs.length + '|' + (recs[0] && recs[0].title);
+  if(VAR_IDX && VAR_IDX_SIG === sig) return VAR_IDX;
+  const idx = new Map(), add = f => { if(f.length >= 4) idx.set(f, (idx.get(f) || 0) + 1); };
+  recs.forEach(r => { const texts = [r.title || '', ...(r.keywords || []), ...(r.kwplus || [])];
+    texts.forEach(tx => { const w = String(tx).toLowerCase().match(/[a-z]+(?:-[a-z]+)*/g) || [];
+      w.forEach((x, i) => { add(x); if(i + 1 < w.length) add(x + ' ' + w[i + 1]); }); }); });
+  VAR_IDX = idx; VAR_IDX_SIG = sig; return idx;
+}
+const SPLIT_PREFIX = ['wet','flood','water','land','green','rain','ground','fresh','waste','storm','sea','hydro','agro','bio','eco','socio','geo','micro','macro','non','post','pre','multi','over','under','air','wild','farm','grass','sun','wind','river','lake','peat','fire','smoke','heat','cross','inter','trans','anti','co'];
+function plural(w){ if(/(s|x|z|ch|sh)$/.test(w)) return w + 'es'; if(/[^aeiou]y$/.test(w)) return w.slice(0, -1) + 'ies'; return w + 's'; }
+const SPELL_PAIRS = [[/ization/, 'isation'], [/isation/, 'ization'], [/yze$/, 'yse'], [/yse$/, 'yze'], [/([a-z]{3})our$/, '$1or'], [/([a-z]{3})ours$/, '$1ors'], [/([a-z]{3})tre$/, '$1ter']];
+/* Sugestões de variação para um termo. Cada sugestão traz o termo e o motivo. */
+function termVariants(raw){
+  const out = [], push = (term, why) => { if(term && edNorm(term) !== edNorm(raw) && !out.some(o => o.term === term)) out.push({term, why}); };
+  const inner = raw.replace(/^"|"$/g, '').replace(/^\{|\}$/g, ''), hasWild = /[*?$]/.test(inner), words = inner.split(/\s+/), isPhrase = words.length > 1;
+  if(!hasWild){
+    if(isPhrase){
+      const last = words[words.length - 1].toLowerCase();
+      if(!/s$/.test(last)) push(words.slice(0, -1).concat(plural(last)).join(' '), 'plural da expressão: no Web of Science as aspas desligam o plural automático, e no PubMed o plural nunca é automático');
+      if(words.length === 2 && SPLIT_PREFIX.includes(words[0].toLowerCase()) && words[1].length <= 6){ push(words.join('').toLowerCase(), 'mesma ideia escrita junta'); push(words.join('-').toLowerCase(), 'mesma ideia com hífen'); }
+    } else if(/-/.test(inner)){ push(inner.replace(/-/g, '').toLowerCase(), 'mesma ideia escrita junta'); push(inner.replace(/-/g, ' '), 'mesma ideia separada'); }
+    else {
+      const w = inner.toLowerCase();
+      const pre = SPLIT_PREFIX.filter(p => w.startsWith(p) && w.length - p.length >= 4).sort((a, b) => b.length - a.length)[0];
+      if(pre){ push(pre + ' ' + w.slice(pre.length), 'a palavra composta também aparece separada'); push(pre + '-' + w.slice(pre.length), 'a palavra composta também aparece com hífen'); }
+      if(curBase === 'pubmed' && w.length >= 5 && !/s$/.test(w)) push(plural(w), 'plural: necessário no PubMed, que não inclui o plural sozinho');
+    }
+    if(curBase === 'pubmed') SPELL_PAIRS.forEach(([re, to]) => { if(re.test(inner)) push(inner.replace(re, to), 'grafia britânica ou americana: necessária no PubMed'); });
+  }
+  const idx = varIndex();
+  if(idx && !hasWild){
+    // formas candidatas: singular e plural da última palavra, junto, separado e com hífen
+    const low = inner.toLowerCase(), ws = low.split(/\s+/), lastForms = w => [...new Set([w, plural(w), singular(w), plural(singular(w))])];
+    const cands = new Set(), addForms = arr => { const pre = arr.slice(0, -1).join(' '); lastForms(arr[arr.length - 1]).forEach(f => cands.add((pre ? pre + ' ' : '') + f)); };
+    addForms(ws);
+    if(ws.length === 2){ addForms([ws.join('')]); addForms([ws.join('-')]); }
+    if(ws.length === 1 && /-/.test(low)){ addForms([low.replace(/-/g, '')]); addForms(low.split('-')); }
+    out.forEach(o => { const a = o.term.toLowerCase().replace(/^"|"$/g, '').split(/\s+/); addForms(a); });
+    SPELL_PAIRS.forEach(([re, to]) => { if(re.test(low)) addForms(low.replace(re, to).split(/\s+/)); });
+    [...cands].map(f => [f, idx.get(f) || 0]).filter(([f, n]) => n > 0 && edNorm(f) !== edNorm(inner)).sort((a, b) => b[1] - a[1]).slice(0, 6).forEach(([f, n]) => {
+      const why = `aparece ${fmt(n)} ${n === 1 ? 'vez' : 'vezes'} nos títulos e palavras-chave do seu corpus`, o = out.find(x => edNorm(x.term) === edNorm(f));
+      if(o) o.why += '; ' + why; else push(f, why); });
+  }
+  return out;
+}
+function renderVariants(){
+  const host = document.getElementById('term-variants'); if(!host) return;
+  const blocks = conceptInputs().map((inp, ci) => ({ci, terms: qterms(inp.value).map(quoteIfNeeded)})).filter(b => b.terms.length);
+  const rows = []; blocks.forEach(b => b.terms.forEach(t => { const v = termVariants(t).filter(x => !b.terms.some(y => edNorm(y) === edNorm(x.term))); if(v.length) rows.push({ci: b.ci, t, v}); }));
+  host.innerHTML = rows.length ? `<b class="small">Variações para conferir</b><div class="small muted" style="margin:2px 0 8px">A Sala sugere, você decide. Clique em + para incluir no conceito.${varIndex() ? '' : ' Com o arquivo do projeto importado, aparecem também as formas encontradas nos seus documentos.'}</div>` +
+    rows.map(r => `<div style="border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff"><div class="small"><b>${esc(r.t)}</b> <span class="muted">(conceito ${r.ci + 1})</span></div>` +
+      r.v.map(x => `<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:6px"><span class="small"><code>${esc(x.term)}</code> <span class="muted">${esc(x.why)}</span></span><button class="btn sm" type="button" onclick="conceptAppend(${r.ci},decodeURIComponent('${encodeURIComponent(x.term)}'))">+ incluir</button></div>`).join('') + '</div>').join('') : '';
+}
+
 /* Regras de escrita de cada base, conferidas nas páginas de ajuda oficiais e em guias de bibliotecas universitárias. */
 const BASE_RULES = {
   wos: ['O plural e as variações de grafia entram sozinhos no campo Topic (lematização): article já encontra articles.',
@@ -889,16 +984,19 @@ const BASE_RULES = {
         '? troca exatamente uma letra e $ troca zero ou uma: wom?n acha woman e women.',
         'Escreva pelo menos 3 letras antes do *.',
         'Quando você usa *, ?, ou $, a lematização desliga naquele termo.',
-        'Aspas buscam a expressão na ordem exata: "climate change".'],
+        'Aspas buscam a expressão exata e desligam o plural automático: "water resource" não acha water resources. Inclua as duas formas.',
+        'Hífen cobre as duas grafias separadas: hydro-power acha hydro-power e hydro power, mas não hydropower junto.'],
   scopus: ['O plural entra sozinho: article já encontra articles, e criterion acha criteria.',
         '* troca zero ou mais letras: forest* acha forest, forests, forestry.',
         '? troca exatamente uma letra: wom?n acha woman e women.',
-        'Aspas fazem frase flexível: aceitam plural e *, como "wind turbine*".',
+        'Aspas fazem frase flexível: aceitam plural e *, como "wind turbine*", e tratam hífen como espaço.',
+        'Palavra junta e separada são termos diferentes: wetland não acha wet land. Inclua as duas.',
         'Chaves fazem frase exata, sem plural e sem *: {heart attack} não acha heart attacks.'],
   pubmed: ['* troca zero ou mais letras e precisa de pelo menos 4 letras antes: child* acha child e children.',
         'O * pode ficar no meio e dentro de frase: "breast feed*" ou colo*r.',
         'O PubMed não tem o ? para uma letra só.',
         'Termo com * não é ligado ao vocabulário MeSH; combine com o descritor [mh] quando existir.',
+        'O plural não entra sozinho: inclua as duas formas ou use *, como "water resource*".',
         'Escreva AND, OR e NOT em maiúsculas.'],
   scielo: ['Escreva os termos em português, inglês e espanhol, porque a coleção é multilíngue.',
         'Aspas buscam a expressão: "mudanças climáticas".',
@@ -927,7 +1025,8 @@ function termNotes(base, raw){
   return out;
 }
 function generate(){
-  const groups = ['c1','c2','c3'].map(id => qterms($('#'+id).value).map(quoteIfNeeded)).filter(g => g.length);
+  const groups = conceptInputs().map(inp => qterms(inp.value).map(quoteIfNeeded)).filter(g => g.length);
+  try{ renderVariants(); }catch(e){ console.warn('Variações:', e); }
   const all = document.getElementById('all-strings'), notes = document.getElementById('term-notes');
   if(!groups.length){ $('#generated').textContent = 'A string gerada aparecerá aqui.'; if(all) all.innerHTML = ''; if(notes) notes.innerHTML = ''; return; }
   $('#generated').textContent = buildFor(curBase, groups);
@@ -940,7 +1039,7 @@ function useGenerated(){ const g = $('#generated').textContent; if(g.startsWith(
 function renderProtocol(){
   const p = PROJ?.protocol || {};
   $('#pr-query').value = p.query || ''; $('#pr-date').value = p.date || ''; $('#pr-n').value = p.n ?? ''; $('#pr-filters').value = p.filters || ''; $('#pr-notes').value = p.notes || '';
-  if(PROJ?.base) curBase = PROJ.base; $$('.basebtn').forEach(b => b.classList.toggle('on', b.dataset.base === curBase)); renderBase();
+  if(PROJ?.base) curBase = PROJ.base; $$('.basebtn').forEach(b => b.classList.toggle('on', b.dataset.base === curBase)); renderBase(); conceptLoad();
 }
 async function saveProtocol(){
   if(!PROJ){ toast('Abra um projeto primeiro'); return; }
