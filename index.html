@@ -453,7 +453,7 @@ table.t th.n{text-align:right}
           <div class="lead">Da busca ao corpus analisado: bases consultadas, registros identificados, duplicados removidos e documentos incluídos. Os números vêm do que foi importado neste projeto.</div>
           <div class="grid2" style="align-items:start;margin-bottom:12px">
             <div class="field" style="margin:0"><label>Estratégia de busca mostrada no fluxograma</label><textarea id="flow-query" style="min-height:74px" oninput="flowEdit()" placeholder="Por padrão, usa a string salva no Roteiro de busca"></textarea></div>
-            <div class="field" style="margin:0"><label>Exclusões feitas fora da Sala (opcional): motivo; quantidade</label><textarea id="flow-excl" style="min-height:74px" oninput="flowEdit()" placeholder="Uma por linha, no formato motivo; número&#10;Fora do tema; 120&#10;Sem dados originais; 35"></textarea><div id="flow-excl-warn"></div><div class="small muted" style="margin-top:6px">Para excluir documentos aqui dentro, com o motivo de cada um, use a <a href="#" onclick="scrGo();return false">Triagem dos documentos</a>. O fluxograma soma os excluídos por motivo.</div><label style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer"><input type="checkbox" id="flow-gray" onchange="flowEdit()" style="width:auto">Tons de cinza</label></div>
+            <div class="field" style="margin:0"><label>Exclusões feitas fora da Sala (opcional): motivo e quantidade</label><textarea id="flow-excl" style="min-height:74px" oninput="flowEdit()" placeholder="Uma por linha: motivo e quantidade&#10;Fora do tema 120&#10;Sem dados originais 35"></textarea><div id="flow-excl-warn"></div><div class="small muted" style="margin-top:6px">Para excluir documentos aqui dentro, com o motivo de cada um, use a <a href="#" onclick="scrGo();return false">Triagem dos documentos</a>. O fluxograma soma os excluídos por motivo.</div><label style="display:flex;align-items:center;gap:8px;margin-top:8px;cursor:pointer"><input type="checkbox" id="flow-gray" onchange="flowEdit()" style="width:auto">Tons de cinza</label></div>
           </div>
           <div id="flow-box" style="overflow-x:auto"></div>
         </div>
@@ -635,7 +635,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.8.0";
+const APP_VERSION = "1.8.1";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -2444,7 +2444,7 @@ function flowData(){
   const byBase = new Map(); F.files.forEach(f => byBase.set(f.base, (byBase.get(f.base) || 0) + f.read));
   const bases = [...byBase.entries()].map(([name, n]) => ({name, n})), identified = bases.reduce((s,b) => s + b.n, 0), unique = F.unique, dup = Math.max(0, identified - unique);
   const manualLines = String(P.excl || '').split('\n').map(l => l.trim()).filter(Boolean);
-  const manual = manualLines.map(l => { const m = /^(.*?)[;:\t]\s*(\d[\d.]*)\s*$/.exec(l); return m ? {label: m[1].replace(/[;:]+$/, '').trim(), n: +m[2].replace(/\./g, '')} : null; });
+  const manual = manualLines.map(l => { const m = /^(.*?\D)\s*[;:=,\t(\-]*\s*(?:N\s*=\s*)?(\d{1,3}(?:\.\d{3})+|\d+)\s*\)?\s*(?:documentos?|registros?|artigos?)?\s*$/i.exec(l); return m ? {label: m[1].replace(/[\s;:=,(\-]+$/, '').trim(), n: +m[2].replace(/\./g, '')} : null; });
   const ignored = manualLines.filter((l, i) => !manual[i] || !manual[i].label || !(manual[i].n > 0));
   const scr = F.screen || {excluded: 0, edited: 0, reasons: []};
   const excl = [...(scr.reasons || []).map(([label, n]) => ({label, n})), ...manual.filter(x => x && x.label && x.n > 0)];
@@ -2459,7 +2459,8 @@ function renderFlow(){
   if(ex && document.activeElement !== ex) ex.value = P.excl || '';
   if(gr) gr.checked = !!P.gray;
   const D = flowData();
-  const fw = document.getElementById('flow-excl-warn'); if(fw) fw.innerHTML = D && D.ignored.length ? '<div class="msg warn" style="margin:8px 0 0">' + (D.ignored.length === 1 ? 'Linha ignorada por falta do número' : 'Linhas ignoradas por falta do número') + ': ' + D.ignored.map(l => esc(cut(l, 40))).join(' | ') + '. Escreva o motivo e a quantidade, por exemplo: Fora do tema; 120</div>' : '';
+  const fw = document.getElementById('flow-excl-warn'); if(fw) fw.innerHTML = D && D.ignored.length ? '<div class="msg warn" style="margin:8px 0 0">' + (D.ignored.length === 1 ? 'Linha ignorada por falta do número' : 'Linhas ignoradas por falta do número') + ': ' + D.ignored.map(l => esc(cut(l, 40))).join(' | ') + '. Escreva o motivo e depois a quantidade, por exemplo: Fora do tema 120</div>' : '';
+  if(fw && D && D.exN > D.unique) fw.innerHTML += '<div class="msg warn" style="margin:8px 0 0">As exclusões somam ' + fmt(D.exN) + ', mais que os ' + fmt(D.unique) + ' documentos únicos do corpus. Confira os números.</div>';
   if(!D){ host.innerHTML = '<div class="msg info">O fluxograma precisa dos resultados recalculados na versão atual da Sala. Use o botão Recalcular agora, no alto desta aba.</div>'; return; }
   const C = D.gray ? {search: '#f1f3f5', base: '#ffffff', id: '#ffffff', dup: '#dfe3e8', uniq: '#ffffff', rule: '#f1f3f5', excl: '#cfd4da', inc: '#e9ecef', an: '#f8f9fa', line: '#333', text: '#111'}
                    : {search: '#eef6fb', base: '#ffffff', id: '#ffffff', dup: '#bcd9f2', uniq: '#ffffff', rule: '#e8f3ec', excl: '#f6c9a3', inc: '#ffd54a', an: '#f6f8fa', line: '#1a2332', text: '#1a2332'};
