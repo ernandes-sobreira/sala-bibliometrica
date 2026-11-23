@@ -368,13 +368,14 @@ table.t th.n{text-align:right}
     <section id="tab-dados" class="hidden">
       <div class="card">
         <h3>Importar registros</h3>
-        <div class="lead">Aceita CSV, XLSX e TXT delimitado por tabulação exportados do Web of Science, Scopus, SciELO ou PubMed. O arquivo é lido no navegador e enviado ao seu projeto.</div>
+        <div class="lead">Aceita CSV, XLSX e TXT delimitado por tabulação exportados do Web of Science, Scopus, SciELO ou PubMed. O arquivo é lido no navegador e fica guardado no seu projeto, junto com os dados prontos para análise.</div>
         <div class="drop" id="drop" onclick="document.getElementById('file').click()"><b>Arraste o arquivo aqui ou clique para selecionar</b><span>CSV, XLSX, XLS ou TXT</span></div>
         <input type="file" id="file" accept=".csv,.xlsx,.xls,.txt,.tsv" class="hidden">
         <div id="add-base-row" class="hidden" style="margin-top:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><button class="btn" type="button" onclick="document.getElementById('file-add').click()">Adicionar outra base a este corpus</button><span class="small muted">Projeto integrado: junte Web of Science, Scopus, PubMed e SciELO. Documentos repetidos entre bases são unidos.</span></div>
         <input type="file" id="file-add" accept=".csv,.xlsx,.xls,.txt,.tsv" class="hidden" onchange="if(this.files[0]){handleAddFile(this.files[0]);this.value='';}">
         <div id="data-msg"></div>
       </div>
+      <div id="files-box"></div>
       <div id="data-summary" class="hidden">
         <div class="card">
           <h3>Corpus</h3>
@@ -635,7 +636,7 @@ const FIREBASE_CONFIG = {
   appId: "1:955225236703:web:3045f1306261cbfd53756a",
   measurementId: "G-HT4ZV835EZ"
 };
-const APP_VERSION = "1.8.1";
+const APP_VERSION = "1.9.0";
 
 /* ---------- utilidades ---------- */
 const $ = s => document.querySelector(s);
@@ -1417,11 +1418,11 @@ async function handleFile(file){
   try{
     const path='users/'+USER.uid+'/projects/'+PROJ.id+'/'+file.name;
     if(PROJ.file?.path&&PROJ.file.path!==path)await Promise.race([storage.ref(PROJ.file.path).delete().catch(()=>{}),new Promise(r=>setTimeout(r,3000))]);
-    await timeout(storage.ref(path).put(file,{contentType:file.type||'application/octet-stream'}),12000,'o Storage demorou mais de 12 segundos');
+    await putWithProgress(storage.ref(path),file,p=>setMsg('data-msg','<span class="spinner"></span>'+fmt(corpus.records.length)+' registros analisados. Guardando o arquivo no projeto: '+p+'% de '+fmtBytes(file.size),'info'));
     await timeout(updateProj({file:{name:file.name,path,size:file.size,records:corpus.records.length,format:corpus.format,uploadedAt:new Date().toISOString()}}),8000,'não foi possível confirmar o arquivo no projeto');
     const ep=corpus.enrichment; setMsg('data-msg','Arquivo guardado no projeto.'+(ep?' Enriquecimento SciELO: '+ep.matched+'/'+ep.total+' artigos.':''),'ok');
     renderProjectLine();renderCorpusUI();
-  }catch(e){console.error(e);setMsg('data-msg',fmt(corpus.records.length)+' registros analisados. O arquivo bruto não foi guardado no Storage: '+esc(e.message)+'. Isso não impede as análises.','warn');}
+  }catch(e){console.error(e);setMsg('data-msg',fmt(corpus.records.length)+' registros analisados. O arquivo original não foi guardado no Storage: '+esc(e.message)+'. Os dados prontos para análise continuam guardados no projeto.','warn');try{await updateProj({file:{name:file.name,path:null,size:file.size,records:corpus.records.length,format:corpus.format,uploadedAt:new Date().toISOString()}});}catch(e2){}renderProjectLine();renderFilesBox();}
 }
 function readRows(file){
   return new Promise((res, rej) => {
@@ -1587,10 +1588,10 @@ async function handleAddFile(file){
   let path = null, note = '';
   try{
     const p = 'users/' + USER.uid + '/projects/' + PROJ.id + '/extra/' + Date.now() + '-' + file.name;
-    await Promise.race([storage.ref(p).put(file, {contentType: file.type || 'application/octet-stream'}), new Promise((_, rej) => setTimeout(() => rej(new Error('o Storage demorou mais de 12 segundos')), 12000))]);
+    await putWithProgress(storage.ref(p), file, pc => setMsg('data-msg', '<span class="spinner"></span>Guardando ' + esc(file.name) + ' no projeto: ' + pc + '% de ' + fmtBytes(file.size), 'info'));
     path = p;
   }catch(e){ console.warn('Base adicional não guardada:', e); note = ' O arquivo não foi guardado na nuvem (' + esc(e.message || e) + '): ao reabrir o projeto, adicione esta base de novo para recalcular.'; }
-  try{ await updateProj({extraFiles: [...(PROJ.extraFiles || []), {name: file.name, path, format: fmtName, records: read, addedAt: new Date().toISOString()}]}); }
+  try{ await updateProj({extraFiles: [...(PROJ.extraFiles || []), {name: file.name, path, size: file.size, format: fmtName, records: read, addedAt: new Date().toISOString()}]}); }
   catch(e){ console.warn('Lista de bases não salva:', e); note += ' A lista de bases não pôde ser salva no projeto.'; }
   setMsg('data-msg', `${esc(fmtName)}: ${fmt(read)} registros lidos, ${fmt(gained)} novos e ${fmt(read - gained)} já presentes em outra base. O corpus integrado tem ${fmt(CORPUS.records.length)} documentos.` + note, note ? 'warn' : 'ok');
   renderCorpusUI();
@@ -2426,6 +2427,103 @@ function yearWarning(records){
   if(fut/n > .5) return `${fmt(fut)} de ${fmt(n)} registros têm ano de publicação posterior a ${now}. Isso costuma indicar exportação parcial, com apenas os resultados mais recentes da busca.` + tail;
   return '';
 }
+
+/* ---------- dados guardados no projeto: arquivo enviado e corpus pronto ---------- */
+/* Envia o arquivo ao Storage com progresso. Só desiste se o envio ficar parado por 90 segundos. */
+function putWithProgress(ref, file, onPct){
+  return new Promise((res, rej) => {
+    const task = ref.put(file, {contentType: file.type || 'application/octet-stream'});
+    let last = Date.now(), pct = 0;
+    const watch = setInterval(() => { if(Date.now() - last > 90000){ clearInterval(watch); try{ task.cancel(); }catch(e){} rej(new Error('o envio ficou parado por mais de 90 segundos')); } }, 5000);
+    task.on('state_changed', s => { const p = s.totalBytes ? Math.floor(s.bytesTransferred/s.totalBytes*100) : 0; if(p !== pct){ pct = p; last = Date.now(); if(onPct) onPct(p); } },
+      e => { clearInterval(watch); rej(e); }, () => { clearInterval(watch); res(task.snapshot); });
+  });
+}
+function fmtBytes(n){ n = +n || 0; return n >= 1048576 ? fmt1(n/1048576) + ' MB' : n >= 1024 ? Math.round(n/1024) + ' KB' : n + ' B'; }
+/* Guarda no Firestore uma cópia compacta do corpus (sem resumos e referências), em partes de até ~700 KB.
+   Ao reabrir o projeto, os dados voltam sem precisar baixar o arquivo de novo. */
+let CORPUS_SIG = '', CORPUS_SAVING = null;
+function corpusCol(){ return projRef().doc(PROJ.id).collection('corpus'); }
+function corpusSig(){
+  if(typeof CORPUS === 'undefined' || !CORPUS) return '';
+  const b = CORPUS.__base || CORPUS.records || [];
+  return [PROJ && PROJ.id, CORPUS.format, b.length, CORPUS.duplicates || 0, JSON.stringify(CORPUS.flowFiles || []), CORPUS.enrichment ? CORPUS.enrichment.matched : '', b.slice(0, 5).map(r => r.title).join('|')].join('#');
+}
+async function corpusSave(force){
+  if(typeof PROJ === 'undefined' || !PROJ || !PROJ.id || typeof USER === 'undefined' || !USER || typeof CORPUS === 'undefined' || !CORPUS) return;
+  const sig = corpusSig(); if(!force && sig === CORPUS_SIG) return;
+  if(CORPUS_SAVING) await CORPUS_SAVING.catch(() => {});
+  CORPUS_SAVING = (async () => {
+    const base = (CORPUS.__base || CORPUS.records || []).map(r => { const o = Object.assign({}, r); delete o.affil; delete o.addresses; return o; });
+    const chunks = []; let cur = [], size = 0;
+    const enc = new TextEncoder();
+    for(const r of base){ const s = JSON.stringify(r), n = enc.encode(s).length; if(size + n > 650000 && cur.length){ chunks.push('[' + cur.join(',') + ']'); cur = []; size = 0; } cur.push(s); size += n + 1; }
+    if(cur.length || !chunks.length) chunks.push('[' + cur.join(',') + ']');
+    const col = corpusCol();
+    for(let i = 0; i < chunks.length; i++) await col.doc('part' + String(i).padStart(3, '0')).set({i, data: chunks[i]});
+    const prev = PROJ.corpusStore && PROJ.corpusStore.parts || 0;
+    for(let i = chunks.length; i < prev; i++) await col.doc('part' + String(i).padStart(3, '0')).delete().catch(() => {});
+    const meta = {parts: chunks.length, records: base.length, format: CORPUS.format, columns: (CORPUS.columns || []).slice(0, 120), duplicates: CORPUS.duplicates || 0,
+      duplicateList: (CORPUS.duplicateList || []).slice(0, 300), flowFiles: CORPUS.flowFiles || null, enrichment: CORPUS.enrichment || null, integrated: !!CORPUS.integrated, savedAt: new Date().toISOString()};
+    await updateProj({corpusStore: meta});
+    CORPUS_SIG = sig;
+  })();
+  try{ await CORPUS_SAVING; }
+  catch(e){ console.warn('Corpus não guardado no projeto:', e); toast('Os dados não puderam ser guardados no projeto: ' + (e.message || e)); }
+  finally{ CORPUS_SAVING = null; try{ renderFilesBox(); }catch(e){} }
+}
+async function corpusLoad(){
+  const m = PROJ && PROJ.corpusStore; if(!m || !m.parts) return false;
+  const snaps = await Promise.all(Array.from({length: m.parts}, (_, i) => corpusCol().doc('part' + String(i).padStart(3, '0')).get()));
+  if(snaps.some(s => !s.exists)) throw new Error('parte dos dados guardados está faltando');
+  const recs = snaps.flatMap(s => JSON.parse(s.data().data));
+  CORPUS = {format: m.format, records: recs, columns: m.columns || [], duplicates: m.duplicates || 0, duplicateList: m.duplicateList || [], flowFiles: m.flowFiles || undefined, enrichment: m.enrichment || undefined, integrated: !!m.integrated, fromStore: true};
+  if(!CORPUS.flowFiles) delete CORPUS.flowFiles;
+  if(typeof edDropBase === 'function') edDropBase();
+  CORPUS_SIG = corpusSig();
+  return true;
+}
+async function corpusDelete(){
+  const m = PROJ && PROJ.corpusStore; if(!m) return;
+  for(let i = 0; i < (m.parts || 0); i++) await corpusCol().doc('part' + String(i).padStart(3, '0')).delete().catch(() => {});
+}
+/* Quadro "Arquivos enviados" na aba Dados. */
+function renderFilesBox(){
+  const host = document.getElementById('files-box'); if(!host) return;
+  if(typeof PROJ === 'undefined' || !PROJ){ host.innerHTML = ''; return; }
+  const list = [...(PROJ.file ? [Object.assign({main: true}, PROJ.file)] : []), ...((PROJ.extraFiles || []).map(f => Object.assign({main: false}, f)))];
+  const m = PROJ.corpusStore;
+  if(!list.length && !m){ host.innerHTML = ''; return; }
+  const d = s => { try{ return s ? new Date(s).toLocaleString('pt-BR', {dateStyle: 'short', timeStyle: 'short'}) : ''; }catch(e){ return ''; } };
+  host.innerHTML = `<div class="card"><div class="charthead"><div><h3>Arquivos enviados</h3><div class="lead">Ficam guardados no projeto. Ao abrir o projeto em qualquer computador, os dados são carregados sozinhos.</div></div></div>` +
+    (list.length ? `<div class="tscroll" style="margin-top:10px"><table class="t"><thead><tr><th>Arquivo</th><th>Base</th><th class="n">Registros</th><th class="n">Tamanho</th><th>Enviado em</th><th>Situação</th><th></th></tr></thead><tbody>` +
+      list.map(f => `<tr><td>${esc(cut(f.name || '', 60))}${f.main ? ' <span class="pill">principal</span>' : ''}</td><td>${esc(f.format || '')}</td><td class="n">${fmt(f.records || 0)}</td><td class="n">${f.size ? fmtBytes(f.size) : '–'}</td><td>${esc(d(f.uploadedAt || f.addedAt))}</td><td>${f.path ? '<span class="pill" style="border-color:#bfe0cc;background:#eef8f1;color:#1d6b40">guardado</span>' : '<span class="pill" style="border-color:#ecd9b0;background:#fbf3e2;color:#7a5010">não guardado</span>'}</td><td>${f.path ? `<button class="btn sm" type="button" onclick="dlStoredFile('${encodeURIComponent(f.path)}')">Baixar</button>` : ''}</td></tr>`).join('') + '</tbody></table></div>' : '') +
+    `<div class="small ${m ? 'muted' : ''}" style="margin-top:10px">${m ? `Dados prontos guardados no projeto: ${fmt(m.records)} documentos únicos (${esc(m.format || '')}), atualizados em ${esc(d(m.savedAt))}.` : '<span style="color:#7a5010">Os dados ainda não foram guardados no projeto. Importe o arquivo de novo para guardá-los.</span>'}</div></div>`;
+}
+async function dlStoredFile(enc){ try{ const url = await storage.ref(decodeURIComponent(enc)).getDownloadURL(); window.open(url, '_blank'); }catch(e){ toast('Erro ao obter o arquivo: ' + e.message); } }
+(function persistInstall(){
+  if(typeof openProject !== 'function' || typeof saveResults !== 'function' || typeof renderCorpusUI !== 'function' || !(typeof reloadRaw === 'function' && reloadRaw.__integ)) return setTimeout(persistInstall, 150);
+  if(openProject.__persist) return;
+  const rawOpen = openProject;
+  openProject = async function(id){
+    CORPUS_SIG = '';
+    const out = await rawOpen(id);
+    if(PROJ && PROJ.corpusStore && !CORPUS){
+      setMsg('data-msg', '<span class="spinner"></span>Carregando os dados guardados no projeto…', 'info');
+      try{ if(await corpusLoad()){ computeAll(); renderAll(); renderCorpusUI(); setMsg('data-msg', `Dados do projeto carregados: ${fmt(CORPUS.__base ? CORPUS.__base.length : CORPUS.records.length)} documentos.`, 'ok'); if(RESULTS && PROJ.results && PROJ.results.version !== APP_VERSION) saveResults(); } }
+      catch(e){ console.warn('Corpus guardado:', e); setMsg('data-msg', 'Não foi possível carregar os dados guardados: ' + esc(e.message || e) + '. Os resultados salvos continuam nas outras abas.', 'warn'); }
+    }
+    renderFilesBox();
+    return out;
+  };
+  openProject.__persist = true;
+  const rawSave = saveResults;
+  saveResults = function(force){ const p = rawSave(force); setTimeout(() => corpusSave(), 1500); return p; };
+  const rawCorpusUI = renderCorpusUI;
+  renderCorpusUI = function(){ const x = rawCorpusUI(); try{ renderFilesBox(); }catch(e){} return x; };
+  const rawDel = deleteProject;
+  deleteProject = async function(){ if(PROJ && PROJ.corpusStore){ const keep = PROJ; try{ if(confirm(`Excluir o projeto "${keep.title}" e todos os dados guardados? Esta ação não pode ser desfeita.`)){ await corpusDelete(); const c = window.confirm; window.confirm = () => true; try{ await rawDel(); } finally{ window.confirm = c; } } }catch(e){ toast('Erro ao excluir: ' + e.message); } return; } return rawDel(); };
+})();
 
 /* ---------- fluxograma do método: da busca ao corpus analisado ---------- */
 function flowPrefs(){ try{ return JSON.parse(localStorage.getItem('sala-fluxo-' + ((PROJ && PROJ.id) || 'x')) || '{}') || {}; }catch(e){ return {}; } }
